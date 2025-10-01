@@ -193,7 +193,7 @@ app.post('/chat', async (req, res) => {
 
 // File processing endpoint
 // body: { fileUrl?: string, fileName?: string, rawText?: string, mode: 'summary'|'quiz', options?: {...} }
-app.post('/api/process-file', verifyFirebaseToken, async (req, res) => {
+app.post('/api/process-file', async (req, res) => {
   try {
     const { fileUrl, fileName, rawText, mode, options } = req.body || {};
     if (!mode || !['summary', 'quiz'].includes(mode)) {
