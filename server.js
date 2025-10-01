@@ -70,15 +70,25 @@ function inferFileTypeFromName(name) {
 async function downloadFileBytes(fileUrl) {
   if (!fileUrl) return null;
   if (fileUrl.startsWith('gs://')) {
-    const bucketName = fileUrl.split('gs://')[1].split('/')[0];
-    const path = fileUrl.replace(`gs://${bucketName}/`, '');
-    const bucket = admin.storage().bucket(bucketName);
-    const file = bucket.file(path);
-    const [buffer] = await file.download();
-    return buffer;
+    console.error('gs:// URLs not supported on deployed backend - Firebase Admin SDK not properly configured');
+    throw new Error('File URL format not supported. Please use HTTPS URLs.');
   }
-  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-  return Buffer.from(response.data);
+  try {
+    console.log('Making HTTP request to:', fileUrl);
+    const response = await axios.get(fileUrl, { 
+      responseType: 'arraybuffer',
+      timeout: 30000 // 30 second timeout
+    });
+    console.log('HTTP response status:', response.status);
+    return Buffer.from(response.data);
+  } catch (error) {
+    console.error('HTTP download failed:', error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    }
+    throw new Error(`HTTP download error: ${error.message}`);
+  }
 }
 
 async function parseBufferToText(buffer, fileType) {
@@ -196,17 +206,30 @@ app.post('/chat', async (req, res) => {
 app.post('/api/process-file', async (req, res) => {
   try {
     const { fileUrl, fileName, rawText, mode, options } = req.body || {};
+    console.log('File processing request:', { 
+      hasFileUrl: !!fileUrl, 
+      fileName, 
+      hasRawText: !!rawText, 
+      mode,
+      fileUrlType: fileUrl ? (fileUrl.startsWith('gs://') ? 'gs' : 'https') : 'none'
+    });
+    
     if (!mode || !['summary', 'quiz'].includes(mode)) {
       return res.status(400).json({ error: 'Invalid or missing mode' });
     }
 
     let text = '';
     if (rawText && typeof rawText === 'string' && rawText.trim().length > 0) {
+      console.log('Processing raw text, length:', rawText.length);
       text = rawText;
     } else if (fileUrl) {
+      console.log('Downloading file from URL:', fileUrl);
       const fileBuffer = await downloadFileBytes(fileUrl);
+      console.log('File buffer size:', fileBuffer ? fileBuffer.length : 'null');
       const fileType = inferFileTypeFromName(fileName || fileUrl);
+      console.log('Inferred file type:', fileType);
       text = await parseBufferToText(fileBuffer, fileType);
+      console.log('Extracted text length:', text ? text.length : 'null');
     } else {
       return res.status(400).json({ error: 'Provide rawText or fileUrl' });
     }
