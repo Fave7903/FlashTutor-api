@@ -26,21 +26,8 @@ const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite"});
 
-// Initialize Firebase Admin SDK (for auth verification and optional Storage access)
-if (!admin.apps.length) {
-  try {
-    const usingADC = !!process.env.GOOGLE_APPLICATION_CREDENTIALS;
-    admin.initializeApp({
-      // applicationDefault() will load GOOGLE_APPLICATION_CREDENTIALS when set locally,
-      // or use default service account when running on Google Cloud.
-      credential: admin.credential.applicationDefault(),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || undefined,
-    });
-    console.log(`firebase-admin initialized. ADC: ${usingADC ? 'GOOGLE_APPLICATION_CREDENTIALS set' : 'default credentials'}`);
-  } catch (err) {
-    console.error('Failed to initialize firebase-admin:', err.message);
-  }
-}
+// Firebase Admin SDK disabled - using public file access only
+console.log('Firebase Admin SDK disabled - using public file access');
 
 async function verifyFirebaseToken(req, res, next) {
   try {
@@ -70,31 +57,8 @@ function inferFileTypeFromName(name) {
 async function downloadFileBytes(fileUrl) {
   if (!fileUrl) return null;
   if (fileUrl.startsWith('gs://')) {
-    console.error('gs:// URLs not supported on deployed backend - Firebase Admin SDK not properly configured');
+    console.error('gs:// URLs not supported - Firebase Admin SDK disabled');
     throw new Error('File URL format not supported. Please use HTTPS URLs.');
-  }
-  
-  // For Firebase Storage URLs, try to extract the file path and use Firebase Admin SDK
-  if (fileUrl.includes('firebasestorage.googleapis.com')) {
-    try {
-      // Parse the Firebase Storage URL to extract bucket and path
-      const url = new URL(fileUrl);
-      const pathMatch = url.pathname.match(/\/o\/(.+)$/);
-      if (pathMatch) {
-        const encodedPath = pathMatch[1];
-        const filePath = decodeURIComponent(encodedPath);
-        
-        // Use Firebase Admin SDK to download
-        const bucket = admin.storage().bucket('flashtutor-46ec1.firebasestorage.app');
-        const file = bucket.file(filePath);
-        const [buffer] = await file.download();
-        console.log('Downloaded via Firebase Admin SDK, size:', buffer.length);
-        return buffer;
-      }
-    } catch (firebaseError) {
-      console.error('Firebase Admin SDK download failed:', firebaseError.message);
-      // Fall back to HTTP download
-    }
   }
   
   try {
