@@ -73,11 +73,37 @@ async function downloadFileBytes(fileUrl) {
     console.error('gs:// URLs not supported on deployed backend - Firebase Admin SDK not properly configured');
     throw new Error('File URL format not supported. Please use HTTPS URLs.');
   }
+  
+  // For Firebase Storage URLs, try to extract the file path and use Firebase Admin SDK
+  if (fileUrl.includes('firebasestorage.googleapis.com')) {
+    try {
+      // Parse the Firebase Storage URL to extract bucket and path
+      const url = new URL(fileUrl);
+      const pathMatch = url.pathname.match(/\/o\/(.+)$/);
+      if (pathMatch) {
+        const encodedPath = pathMatch[1];
+        const filePath = decodeURIComponent(encodedPath);
+        
+        // Use Firebase Admin SDK to download
+        const bucket = admin.storage().bucket('flashtutor-46ec1.firebasestorage.app');
+        const file = bucket.file(filePath);
+        const [buffer] = await file.download();
+        console.log('Downloaded via Firebase Admin SDK, size:', buffer.length);
+        return buffer;
+      }
+    } catch (firebaseError) {
+      console.error('Firebase Admin SDK download failed:', firebaseError.message);
+      // Fall back to HTTP download
+    }
+  }
+  
   try {
     console.log('Making HTTP request to:', fileUrl);
+    
     const response = await axios.get(fileUrl, { 
       responseType: 'arraybuffer',
-      timeout: 30000 // 30 second timeout
+      timeout: 30000,
+      maxRedirects: 5
     });
     console.log('HTTP response status:', response.status);
     return Buffer.from(response.data);
@@ -85,7 +111,9 @@ async function downloadFileBytes(fileUrl) {
     console.error('HTTP download failed:', error.message);
     if (error.response) {
       console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
+      console.error('Response headers:', error.response.headers);
+      const responseText = Buffer.from(error.response.data).toString('utf8', 0, 200);
+      console.error('Response data preview:', responseText);
     }
     throw new Error(`HTTP download error: ${error.message}`);
   }
