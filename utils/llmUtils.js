@@ -37,8 +37,8 @@ async function summarizeLongText(text) {
 }
 
 async function generateQuizFromText(text, options = {}) {
-  const { numMcq = 5, numTf = 3, numSa = 2 } = options;
-  const prompt = `Create a study quiz from the text below. Return STRICT JSON only with shape: {"questions": [{"question": string, "options": string[], "answer": string}]}.\n- Include exactly ${numMcq} multiple-choice items.\n- Include ${numTf} true/false by using options ["True","False"] and answer must be either "True" or "False".\n- Include ${numSa} short answer by using 3-4 plausible options and set the correct one in answer.\nTEXT:\n${text}`;
+  const { numMcq = 15, numTf = 5 } = options;
+  const prompt = `Create a study quiz from the text below. Return STRICT JSON only with shape: {"questions": [{"question": string, "options": string[], "answer": string}]}.\n- Include exactly ${numMcq} multiple-choice items.\n- Include ${numTf} true/false by using options ["True","False"] and answer must be either "True" or "False".\nTEXT:\n${text}`;
   const result = await model.generateContent(prompt);
   const raw = (await result.response.text()).replace(/```json/g, '').replace(/```/g, '').trim();
   try {
@@ -60,7 +60,7 @@ async function generateQuizFromText(text, options = {}) {
 async function generateTutorialModule(paragraphText, moduleIndex = 0) {
   // For the first module, use a welcoming prompt. For subsequent modules, be continuous.
   const introText = moduleIndex === 0 
-    ? `You are FlashTutor, an expert, fun, and engaging AI tutor. I'll be teaching you step by step. Let's begin!\n\n`
+    ? `You are Qlearit, an expert, fun, and engaging AI tutor. I'll be teaching you step by step. Let's begin!\n\n`
     : `Continuing with the next concept:\n\n`;
   
   const tutorialPrompt = `${introText}Teach this concept clearly and simply. Explain step-by-step, then ask ONE comprehension question at the end to check understanding.
