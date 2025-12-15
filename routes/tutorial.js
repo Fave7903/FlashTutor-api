@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { downloadFileBytes, parseBufferToText, inferFileTypeFromName } = require('../utils/fileUtils');
-const { 
-  startTutorialSession, 
-  getNextTutorialModule, 
-  handleTutorialFollowUp 
+const {
+  startTutorialSession,
+  getNextTutorialModule,
+  handleTutorialFollowUp,
 } = require('../services/tutorialService');
 
 /**
@@ -48,17 +48,17 @@ router.post('/tutorial/start', async (req, res) => {
 
 /**
  * POST /tutorial/next
- * Get the next tutorial module
+ * Get all tutorial modules for a session (client slices locally)
  */
 router.post('/tutorial/next', async (req, res) => {
   try {
-    const { sessionId } = req.body;
+    const { userId, sessionId } = req.body;
     
-    if (!sessionId) {
-      return res.status(400).json({ error: 'sessionId is required' });
+    if (!userId || !sessionId) {
+      return res.status(400).json({ error: 'userId and sessionId are required' });
     }
 
-    const result = await getNextTutorialModule(sessionId);
+    const result = await getNextTutorialModule(userId, sessionId);
     res.json(result);
   } catch (err) {
     console.error('Error in /tutorial/next:', err);
@@ -68,17 +68,22 @@ router.post('/tutorial/next', async (req, res) => {
 
 /**
  * POST /tutorial/followup
- * Handle follow-up questions about the current tutorial module
+ * Handle follow-up or grading for a specific module
  */
 router.post('/tutorial/followup', async (req, res) => {
   try {
-    const { sessionId, question } = req.body;
+    const { userId, sessionId, question, moduleIndex } = req.body;
     
-    if (!sessionId || !question) {
-      return res.status(400).json({ error: 'sessionId and question are required' });
+    if (!userId || !sessionId || !question) {
+      return res.status(400).json({ error: 'userId, sessionId and question are required' });
     }
 
-    const result = await handleTutorialFollowUp(sessionId, question);
+    const result = await handleTutorialFollowUp(
+      userId,
+      sessionId,
+      question,
+      Number.isInteger(moduleIndex) ? moduleIndex : undefined
+    );
     res.json(result);
   } catch (err) {
     console.error('Error in /tutorial/followup:', err);
