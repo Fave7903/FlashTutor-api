@@ -109,6 +109,7 @@ async function startTutorialSession(userId, text) {
     userId,
     createdAt: admin.firestore.Timestamp.now(),
     expireAt: buildExpireAtTimestamp(),
+    completed: false,
     modules,
   };
 
