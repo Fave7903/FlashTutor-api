@@ -62,7 +62,22 @@ async function generateTutorialModule(paragraphText, moduleIndex = 0) {
   const introText = moduleIndex === 0 
     ? `You are Qlearit, an expert, fun, and engaging AI tutor. I'll be teaching you step by step. Let's begin!\n\n`
     : `Continuing with the next concept:\n\n`;
-  
+
+  // Strict formatting rules to ensure Flutter renders Math and Tables correctly
+  const formattingRules = `
+### STRICT FORMATTING RULES:
+1. **Mathematical Formulas (LaTeX Only):**
+   - **Inline Math:** Use single dollar signs. Example: $E = mc^2$ or "Let $x$ be the variable."
+   - **Block Math:** Use double dollar signs. Example: $$ x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a} $$
+   - **Matrices:** Use LaTeX environments inside double dollars. Example: $$ \\begin{vmatrix} 1 & 2 \\\\ 3 & 4 \\end{vmatrix} $$
+   - **Do NOT** use code blocks (like \`\`\`math) for equations.
+
+2. **Tables & Text (Markdown Only):**
+   - **Tables:** Use standard Markdown tables. Do NOT use LaTeX arrays/tabular for text data.
+   - **Styling:** Use **bold**, *italics*, and lists as normal.
+   - **Conflict Prevention:** Never put standard text descriptions inside a LaTeX math block.
+`;
+
   const tutorialPrompt = `${introText}Teach this concept clearly and simply. Explain step-by-step, then ask ONE comprehension question at the end to check understanding.
 
 Teaching style:
@@ -72,6 +87,8 @@ Teaching style:
 - Motivational: encourage learning
 - Concise to keep tokens minimal
 
+${formattingRules}
+
 Paragraph to teach:
 ${paragraphText}
 
@@ -80,18 +97,54 @@ Now teach this concept and ask ONE comprehension question at the end.`;
   const result = await model.generateContent(tutorialPrompt);
   const response = await result.response;
   const text = response.text();
-  
+
   // Try to detect if there's a question in the response
   const questionIndicators = ['?', 'question', 'what', 'how', 'why', 'which', 'can you'];
   const hasQuestion = questionIndicators.some(indicator => 
     text.toLowerCase().includes(indicator.toLowerCase())
   );
-  
+
   return {
     text,
     isQuestion: hasQuestion,
   };
 }
+
+// async function generateTutorialModule(paragraphText, moduleIndex = 0) {
+//   // For the first module, use a welcoming prompt. For subsequent modules, be continuous.
+//   const introText = moduleIndex === 0 
+//     ? `You are Qlearit, an expert, fun, and engaging AI tutor. I'll be teaching you step by step. Let's begin!\n\n`
+//     : `Continuing with the next concept:\n\n`;
+  
+//   const tutorialPrompt = `${introText}Teach this concept clearly and simply. Explain step-by-step, then ask ONE comprehension question at the end to check understanding.
+
+// Teaching style:
+// - Clear and step-by-step
+// - Engaging with light humor
+// - Interactive: ask questions to check understanding
+// - Motivational: encourage learning
+// - Concise to keep tokens minimal
+
+// Paragraph to teach:
+// ${paragraphText}
+
+// Now teach this concept and ask ONE comprehension question at the end.`;
+
+//   const result = await model.generateContent(tutorialPrompt);
+//   const response = await result.response;
+//   const text = response.text();
+  
+//   // Try to detect if there's a question in the response
+//   const questionIndicators = ['?', 'question', 'what', 'how', 'why', 'which', 'can you'];
+//   const hasQuestion = questionIndicators.some(indicator => 
+//     text.toLowerCase().includes(indicator.toLowerCase())
+//   );
+  
+//   return {
+//     text,
+//     isQuestion: hasQuestion,
+//   };
+// }
 
 module.exports = {
   sendMessageWithRetry,

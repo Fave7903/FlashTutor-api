@@ -3,7 +3,7 @@ const { model, generateTutorialModule } = require('../utils/llmUtils');
 const { admin, db } = require('../config/firestore');
 
 const USERS_COLLECTION = 'users';
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function buildExpireAtTimestamp() {
   return admin.firestore.Timestamp.fromDate(new Date(Date.now() + SESSION_TTL_MS));
