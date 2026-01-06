@@ -38,24 +38,125 @@ async function summarizeLongText(text) {
 
 async function generateQuizFromText(text, options = {}) {
   const { numMcq = 15, numTf = 5 } = options;
-  const prompt = `Create a study quiz from the text below. Return STRICT JSON only with shape: {"questions": [{"question": string, "options": string[], "answer": string}]}.\n- Include exactly ${numMcq} multiple-choice items.\n- Include ${numTf} true/false by using options ["True","False"] and answer must be either "True" or "False".\nTEXT:\n${text}`;
-  const result = await model.generateContent(prompt);
-  const raw = (await result.response.text()).replace(/```json/g, '').replace(/```/g, '').trim();
+
+  console.log(`🚀 Starting "Divide & Conquer" Generation...`);
+
+  // --- 1. PREPARE TEXT CHUNKS (The Secret Sauce) ---
+  // We split the text so workers don't overlap.
+  const cleanText = text.substring(0, 200000); // Safety cap
+  const midPoint = Math.floor(cleanText.length / 2);
+  
+  // Chunk 1: Beginning to Middle (with a little overlap buffer)
+  const textFirstHalf = cleanText.substring(0, midPoint + 500);
+  
+  // Chunk 2: Middle to End
+  const textSecondHalf = cleanText.substring(midPoint);
+
+  const quizSchema = {
+    type: "OBJECT",
+    properties: {
+      questions: {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            question: { type: "STRING" },
+            options: { type: "ARRAY", items: { type: "STRING" } },
+            answer: { type: "STRING" }
+          },
+          required: ["question", "options", "answer"]
+        }
+      }
+    }
+  };
+
+  const formattingRules = `
+  MATH FORMATTING:
+  - Use standard LaTeX for formulas ($E=mc^2$).
+  - Output raw strings (e.g. \\frac).
+  `;
+
+  // --- 2. WORKER FUNCTION ---
+  const generateBatch = async (label, type, count, textSegment) => {
+    if (count <= 0) return [];
+    
+    const typeDescription = type === 'MCQ' 
+      ? `Multiple-Choice Questions (4 options each)` 
+      : `True/False Questions (2 options each)`;
+
+    console.log(`   -> [${label}] Processing ${count} ${type}...`);
+    
+    // We pass ONLY the specific segment of text to this worker
+    const prompt = `Create a study quiz based ONLY on the text fragment provided below.
+    TASK: Generate exactly ${count} ${typeDescription}.
+    ${formattingRules}
+    TEXT FRAGMENT: ${textSegment}`;
+
+    try {
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: quizSchema,
+          maxOutputTokens: 8192,
+          temperature: 0.3,
+        }
+      });
+      const data = JSON.parse(result.response.text());
+      return data.questions || [];
+    } catch (e) {
+      console.error(`   x [${label}] Failed: ${e.message}`);
+      return []; 
+    }
+  };
+
+  // --- 3. EXECUTE PARALLEL WORKERS ON DIFFERENT TEXTS ---
+  const mcqSplit1 = Math.ceil(numMcq / 2);
+  const mcqSplit2 = numMcq - mcqSplit1;
+  
   try {
-    const parsed = JSON.parse(raw);
-    const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
-    const normalized = questions.map((q) => {
-      const question = (q.question || q.prompt || '').toString();
-      const options = Array.isArray(q.options) ? q.options.map((o) => o.toString()) : [];
-      const answer = (q.answer || '').toString();
-      return { question, options, answer };
-    });
-    return { questions: normalized };
-  } catch (e) {
-    console.error('Quiz JSON parse failed:', e.message);
-    return { questions: [] };
+    const [batch1, batch2, batch3] = await Promise.all([
+      // Worker A: Quiz on the FIRST HALF
+      generateBatch("Worker A (First Half)", 'MCQ', mcqSplit1, textFirstHalf),
+      
+      // Worker B: Quiz on the SECOND HALF
+      generateBatch("Worker B (Second Half)", 'MCQ', mcqSplit2, textSecondHalf),
+      
+      // Worker C: Quiz on EVERYTHING (T/F are usually distinct enough)
+      generateBatch("Worker C (T/F)", 'TF', numTf, cleanText)
+    ]);
+
+    const allQuestions = [...batch1, ...batch2, ...batch3];
+    
+    console.log(`✅ Final Count: ${allQuestions.length} / ${numMcq + numTf}`);
+    return { questions: allQuestions };
+
+  } catch (error) {
+    console.error("Critical Failure:", error);
+    throw error;
   }
 }
+
+// async function generateQuizFromText(text, options = {}) {
+//   const { numMcq = 15, numTf = 5 } = options;
+//   const prompt = `Create a study quiz from the text below. Return STRICT JSON only with shape: {"questions": [{"question": string, "options": string[], "answer": string}]}.\n- Include exactly ${numMcq} multiple-choice items.\n- Include ${numTf} true/false by using options ["True","False"] and answer must be either "True" or "False".\nTEXT:\n${text}`;
+//   const result = await model.generateContent(prompt);
+//   const raw = (await result.response.text()).replace(/```json/g, '').replace(/```/g, '').trim();
+//   try {
+//     const parsed = JSON.parse(raw);
+//     const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+//     const normalized = questions.map((q) => {
+//       const question = (q.question || q.prompt || '').toString();
+//       const options = Array.isArray(q.options) ? q.options.map((o) => o.toString()) : [];
+//       const answer = (q.answer || '').toString();
+//       return { question, options, answer };
+//     });
+//     return { questions: normalized };
+//   } catch (e) {
+//     console.error('Quiz JSON parse failed:', e.message);
+//     return { questions: [] };
+//   }
+// }
 
 async function generateTutorialModule(paragraphText, moduleIndex = 0) {
   // For the first module, use a welcoming prompt. For subsequent modules, be continuous.
