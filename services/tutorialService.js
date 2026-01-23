@@ -1,6 +1,7 @@
 const { extractParagraphs } = require('../utils/fileUtils');
 const { model, generateTutorialModule } = require('../utils/llmUtils');
 const { admin, db } = require('../config/firestore');
+const QreditService = require('./qreditService');
 
 const USERS_COLLECTION = 'users';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -100,6 +101,15 @@ async function startTutorialSession(userId, text) {
   if (paragraphs.length === 0) {
     throw new Error('No paragraphs extracted from text');
   }
+
+  // 1. Calculate Costs
+  const BASE_UPLOAD_COST = 5;
+  const CHUNK_COST = 1; // 1 Qredit per chunk/paragraph
+  const totalCost = BASE_UPLOAD_COST + (paragraphs.length * CHUNK_COST);
+
+  // 2. Deduct Qredits
+  // This will throw { code: 'INSUFFICIENT_FUNDS' } if balance is too low
+  await QreditService.deduct(userId, totalCost, `Tutorial (${paragraphs.length} modules)`);
 
   const modules = await Promise.all(
     paragraphs.map((paragraph, index) => generateLearningModule(paragraph, index))
@@ -218,4 +228,3 @@ module.exports = {
   getNextTutorialModule,
   handleTutorialFollowUp,
 };
-

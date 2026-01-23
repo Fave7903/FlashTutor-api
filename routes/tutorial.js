@@ -41,6 +41,15 @@ router.post('/tutorial/start', async (req, res) => {
       message: 'Tutorial session started successfully'
     });
   } catch (err) {
+    // Specific handling for deduction errors
+    if (err.code === 'INSUFFICIENT_FUNDS') {
+      return res.status(402).json({ 
+        error: 'Insufficient Qredits', 
+        message: 'You do not have enough Qredits to start this tutorial.',
+        details: err 
+      });
+    }
+
     console.error('Error in /tutorial/start:', err);
     res.status(500).json({ error: err.message || 'Internal Server Error' });
   }
@@ -92,4 +101,3 @@ router.post('/tutorial/followup', async (req, res) => {
 });
 
 module.exports = router;
-
