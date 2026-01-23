@@ -1,47 +1,66 @@
 const express = require('express');
 const router = express.Router();
+const admin = require('firebase-admin');
 const { downloadFileBytes, parseBufferToText, inferFileTypeFromName } = require('../utils/fileUtils');
-const {
-  startTutorialSession,
-  getNextTutorialModule,
-  handleTutorialFollowUp,
-} = require('../services/tutorialService');
+const { startTutorialSession, getNextTutorialModule, handleTutorialFollowUp } = require('../services/tutorialService');
 
-/**
- * POST /tutorial/start
- * Start a new tutorial session by uploading a file or providing raw text
- */
 router.post('/tutorial/start', async (req, res) => {
   try {
     const { fileUrl, fileName, rawText, userId } = req.body;
+    const idempotencyKey = req.headers['idempotency-key'];
 
-    if (!userId) {
-      return res.status(400).json({ error: 'userId is required' });
+    if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+    // ⚡ IDEMPOTENCY CHECK
+    if (idempotencyKey) {
+      const keyRef = admin.firestore().collection('idempotency_keys').doc(idempotencyKey);
+      const keyDoc = await keyRef.get();
+
+      if (keyDoc.exists) {
+        const data = keyDoc.data();
+        if (data.status === 'PROCESSING') return res.status(409).json({ error: 'Creation in progress' });
+        if (data.status === 'COMPLETED') return res.json(data.result);
+      } else {
+        await keyRef.set({ status: 'PROCESSING', userId, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+      }
     }
 
+    // Processing Logic
     let text = '';
-    if (rawText && typeof rawText === 'string' && rawText.trim().length > 0) {
-      text = rawText;
-    } else if (fileUrl) {
-      const fileBuffer = await downloadFileBytes(fileUrl);
-      const fileType = inferFileTypeFromName(fileName || fileUrl);
-      text = await parseBufferToText(fileBuffer, fileType);
-    } else {
-      return res.status(400).json({ error: 'Provide rawText or fileUrl' });
+    try {
+      if (rawText) text = rawText;
+      else if (fileUrl) {
+        const fileBuffer = await downloadFileBytes(fileUrl);
+        const fileType = inferFileTypeFromName(fileName || fileUrl);
+        text = await parseBufferToText(fileBuffer, fileType);
+      } else {
+        throw new Error('Provide rawText or fileUrl');
+      }
+
+      if (!text || text.trim().length === 0) throw new Error('No text extracted');
+
+      // The service now handles Balance Check + Deduction internally
+      const sessionId = await startTutorialSession(userId, text);
+      
+      const responsePayload = { sessionId, message: 'Tutorial session started successfully' };
+
+      // Success - Update Key
+      if (idempotencyKey) {
+        await admin.firestore().collection('idempotency_keys').doc(idempotencyKey).update({
+          status: 'COMPLETED',
+          result: responsePayload
+        });
+      }
+
+      res.json(responsePayload);
+
+    } catch (err) {
+      // Mark key as failed so they can retry
+      if (idempotencyKey) await admin.firestore().collection('idempotency_keys').doc(idempotencyKey).update({ status: 'FAILED' });
+      throw err;
     }
 
-    if (!text || text.trim().length === 0) {
-      return res.status(400).json({ error: 'No text extracted from file' });
-    }
-
-    const sessionId = await startTutorialSession(userId, text);
-    
-    res.json({ 
-      sessionId,
-      message: 'Tutorial session started successfully'
-    });
   } catch (err) {
-    // Specific handling for deduction errors
     if (err.code === 'INSUFFICIENT_FUNDS') {
       return res.status(402).json({ 
         error: 'Insufficient Qredits', 
@@ -49,55 +68,34 @@ router.post('/tutorial/start', async (req, res) => {
         details: err 
       });
     }
-
     console.error('Error in /tutorial/start:', err);
     res.status(500).json({ error: err.message || 'Internal Server Error' });
   }
 });
 
-/**
- * POST /tutorial/next
- * Get all tutorial modules for a session (client slices locally)
- */
+// ... Keep existing routes for /next and /followup ...
 router.post('/tutorial/next', async (req, res) => {
-  try {
-    const { userId, sessionId } = req.body;
-    
-    if (!userId || !sessionId) {
-      return res.status(400).json({ error: 'userId and sessionId are required' });
+    try {
+      const { userId, sessionId } = req.body;
+      if (!userId || !sessionId) return res.status(400).json({ error: 'userId and sessionId are required' });
+      const result = await getNextTutorialModule(userId, sessionId);
+      res.json(result);
+    } catch (err) {
+      console.error('Error in /tutorial/next:', err);
+      res.status(500).json({ error: err.message || 'Internal Server Error' });
     }
-
-    const result = await getNextTutorialModule(userId, sessionId);
-    res.json(result);
-  } catch (err) {
-    console.error('Error in /tutorial/next:', err);
-    res.status(500).json({ error: err.message || 'Internal Server Error' });
-  }
 });
-
-/**
- * POST /tutorial/followup
- * Handle follow-up or grading for a specific module
- */
+  
 router.post('/tutorial/followup', async (req, res) => {
-  try {
-    const { userId, sessionId, question, moduleIndex } = req.body;
-    
-    if (!userId || !sessionId || !question) {
-      return res.status(400).json({ error: 'userId, sessionId and question are required' });
+    try {
+      const { userId, sessionId, question, moduleIndex } = req.body;
+      if (!userId || !sessionId || !question) return res.status(400).json({ error: 'userId, sessionId and question are required' });
+      const result = await handleTutorialFollowUp(userId, sessionId, question, Number.isInteger(moduleIndex) ? moduleIndex : undefined);
+      res.json(result);
+    } catch (err) {
+      console.error('Error in /tutorial/followup:', err);
+      res.status(500).json({ error: err.message || 'Internal Server Error' });
     }
-
-    const result = await handleTutorialFollowUp(
-      userId,
-      sessionId,
-      question,
-      Number.isInteger(moduleIndex) ? moduleIndex : undefined
-    );
-    res.json(result);
-  } catch (err) {
-    console.error('Error in /tutorial/followup:', err);
-    res.status(500).json({ error: err.message || 'Internal Server Error' });
-  }
 });
 
 module.exports = router;

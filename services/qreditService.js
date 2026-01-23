@@ -3,17 +3,18 @@ const { db } = require('../config/firestore');
 
 class QreditService {
   /**
-   * Deduct Qredits from a user, unless Free Mode is enabled.
+   * Deduct Qredits from a user (Hard Deduction).
+   * Throws an error if balance is insufficient.
    * @param {string} userId
    * @param {number} amount
    * @param {string} description
-   * @returns {Promise<{success: true, deducted: false, message: 'Free Mode'} | {success: true, newBalance: number}>}
    */
   static async deduct(userId, amount, description) {
     // Step A: Free Mode Check
     const configRef = db.collection('system_settings').doc('config');
     const configSnap = await configRef.get();
     const isFreeMode = configSnap.exists && configSnap.data()?.is_free_mode === true;
+    
     if (isFreeMode) {
       return { success: true, deducted: false, message: 'Free Mode' };
     }
@@ -21,16 +22,22 @@ class QreditService {
     // Step B: Transaction
     const userRef = db.collection('users').doc(userId);
 
-    const result = await db.runTransaction(async (tx) => {
+    return await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
       if (!userSnap.exists) {
-        throw { code: 'USER_NOT_FOUND', userId };
+        const err = new Error('User not found');
+        err.code = 'USER_NOT_FOUND';
+        throw err;
       }
 
       const currentBalance = userSnap.data().qredit_balance || 0;
 
       if (currentBalance < amount) {
-        throw { code: 'INSUFFICIENT_FUNDS', current: currentBalance, required: amount };
+        const err = new Error('Insufficient Qredits');
+        err.code = 'INSUFFICIENT_FUNDS';
+        err.current = currentBalance;
+        err.required = amount;
+        throw err;
       }
 
       const newBalance = currentBalance - amount;
@@ -49,10 +56,41 @@ class QreditService {
 
       return { success: true, newBalance };
     });
+  }
 
-    return result;
+  /**
+   * Refund Qredits to a user (Compensation Logic).
+   * Used when a paid operation fails mid-process.
+   * @param {string} userId
+   * @param {number} amount
+   * @param {string} description
+   */
+  static async refund(userId, amount, description) {
+    const userRef = db.collection('users').doc(userId);
+
+    return await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      // If user doesn't exist, we can't refund, but this shouldn't happen in this flow
+      if (!userSnap.exists) return;
+
+      const currentBalance = userSnap.data().qredit_balance || 0;
+      const newBalance = currentBalance + amount;
+
+      tx.update(userRef, { qredit_balance: newBalance });
+
+      const txnRef = userRef.collection('transactions').doc();
+      tx.set(txnRef, {
+        type: 'refund',
+        amount,
+        description: description || 'System Refund',
+        balance_before: currentBalance,
+        balance_after: newBalance,
+        created_at: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      return { success: true, newBalance };
+    });
   }
 }
 
 module.exports = QreditService;
-

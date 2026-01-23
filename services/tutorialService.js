@@ -92,7 +92,8 @@ async function fetchActiveSession(userId, sessionId) {
 
 /**
  * Start a new tutorial session
- * @param {string} userId - User ID (used for Firestore path: users/{userId}/tutorials/{sessionId})
+ * STRATEGY: Deduct First -> Generate -> Refund on Error
+ * @param {string} userId - User ID
  * @param {string} text - Text content to extract paragraphs from
  * @returns {Promise<string>} Session ID
  */
@@ -103,28 +104,44 @@ async function startTutorialSession(userId, text) {
   }
 
   // 1. Calculate Costs
-  const BASE_UPLOAD_COST = 5;
-  const CHUNK_COST = 1; // 1 Qredit per chunk/paragraph
+  const BASE_UPLOAD_COST = 0;
+  const CHUNK_COST = 1; 
   const totalCost = BASE_UPLOAD_COST + (paragraphs.length * CHUNK_COST);
 
-  // 2. Deduct Qredits
-  // This will throw { code: 'INSUFFICIENT_FUNDS' } if balance is too low
+  // 2. DEDUCT FIRST
+  // This will throw 'INSUFFICIENT_FUNDS' if balance is low.
+  // We stop execution here if they can't pay.
   await QreditService.deduct(userId, totalCost, `Tutorial (${paragraphs.length} modules)`);
 
-  const modules = await Promise.all(
-    paragraphs.map((paragraph, index) => generateLearningModule(paragraph, index))
-  );
+  // 3. GENERATE CONTENT (With Safety Net)
+  try {
+    const modules = await Promise.all(
+      paragraphs.map((paragraph, index) => generateLearningModule(paragraph, index))
+    );
 
-  const payload = {
-    userId,
-    createdAt: admin.firestore.Timestamp.now(),
-    expireAt: buildExpireAtTimestamp(),
-    completed: false,
-    modules,
-  };
+    const payload = {
+      userId,
+      createdAt: admin.firestore.Timestamp.now(),
+      expireAt: buildExpireAtTimestamp(),
+      completed: false,
+      modules,
+    };
 
-  const docRef = await tutorialCollectionForUser(userId).add(payload);
-  return docRef.id;
+    const docRef = await tutorialCollectionForUser(userId).add(payload);
+    return docRef.id;
+
+  } catch (err) {
+    // 🚨 GENERATION FAILED: REFUND USER
+    console.error(`[Tutorial] Generation failed for user ${userId}. Refunding ${totalCost} Qredits...`);
+    
+    try {
+      await QreditService.refund(userId, totalCost, `Refund: Failed Tutorial Generation`);
+    } catch (refundErr) {
+      console.error('CRITICAL: REFUND FAILED', refundErr);
+    }
+    
+    throw err; // Re-throw so the API returns an error to the client
+  }
 }
 
 /**
@@ -172,7 +189,6 @@ async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleInde
   const shouldGrade = Boolean(module?.rubric && typeof moduleIndex === 'number');
 
   if (shouldGrade) {
-    // REVISED GRADING PROMPT
     const prompt = `You are "Tutor Qlearit," a friendly, encouraging, and highly intelligent study companion for university students.
     
     Your Goal: Evaluate the student's answer based on the Rubric provided without stating the use of the Rubric.
