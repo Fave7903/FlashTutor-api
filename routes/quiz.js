@@ -1,12 +1,31 @@
 const express = require('express');
 const router = express.Router();
+const admin = require('firebase-admin');
 const { model } = require('../config/ai');
+const RateLimitService = require('../services/rateLimitService');
 
 router.post('/quiz', async (req, res) => {
-  const { history, numQuestions } = req.body;
-
   try {
-    // 1. IMPROVED PROMPT: Explicitly defines the schema
+    const { history, numQuestions } = req.body;
+
+    // 1. Authenticate User
+    let userId;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      const token = req.headers.authorization.split('Bearer ')[1];
+      try {
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        userId = decodedToken.uid;
+      } catch (e) {
+         // Silently fail auth or enforce it
+      }
+    }
+
+    // 2. Rate Limit (Free Mode - 'quiz' category)
+    if (userId) {
+      await RateLimitService.checkAndIncrement(userId, 'quiz');
+    }
+
+    // 3. IMPROVED PROMPT: Explicitly defines the schema
     const prompt = `
       Based on the conversation history provided, generate exactly ${numQuestions} multiple-choice quiz questions.
       
@@ -25,8 +44,6 @@ router.post('/quiz', async (req, res) => {
 
     const chat = model.startChat({ 
       history: history,
-      // Optional: If your SDK/Model supports generationConfig, enable JSON mode here
-      // generationConfig: { responseMimeType: "application/json" } 
     });
 
     const result = await chat.sendMessage(prompt);
@@ -55,27 +72,13 @@ router.post('/quiz', async (req, res) => {
     res.json({ questions: normalizedQuestions });
 
   } catch (err) {
+    if (err.code === 'RATE_LIMIT_EXCEEDED') {
+       return res.status(402).json({ error: err.message });
+    }
     console.error('Error in /quiz endpoint:', err);
     // Return a valid empty structure so Flutter doesn't crash on null
     res.status(500).json({ error: 'Internal Server Error', questions: [] });
   }
 });
 
-// router.post('/quiz', async (req, res) => {
-//   console.log('Quiz request received');
-//   const { history, numQuestions } = req.body;
-//   try {
-//     const prompt = `Based on the conversation we just had, generate ${numQuestions} multiple-choice quiz questions and answers. Format JSON {"questions":[...]}`;
-//     const chat = model.startChat({ history });
-//     const result = await chat.sendMessage(prompt);
-//     const response = await result.response;
-//     const text = response.text().replace(/```json/g, '').replace(/```/g, '');
-//     res.json(JSON.parse(text));
-//   } catch (err) {
-//     console.error('Error in /quiz endpoint:', err);
-//     res.status(500).json({ error: 'Internal Server Error' });
-//   }
-// });
-
 module.exports = router;
-

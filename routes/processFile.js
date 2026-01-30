@@ -55,19 +55,20 @@ router.post('/api/process-file', async (req, res) => {
       }
     }
 
-    // 3. DEDUCT FIRST (Strategy A)
+    // 3. DEDUCT / RATE LIMIT
     try {
-      await QreditService.deduct(userId, OPERATION_COST, `Generated ${mode}`);
+      // Pass 'mode' (summary/quiz) as the category for rate limiting
+      await QreditService.deduct(userId, OPERATION_COST, `Generated ${mode}`, mode);
     } catch (error) {
       // Mark idempotency as failed so they can try again
       if (idempotencyKey) {
         await admin.firestore().collection('idempotency_keys').doc(idempotencyKey).update({ status: 'FAILED_FUNDS' });
       }
       
-      if (error.code === 'INSUFFICIENT_FUNDS') {
+      if (error.code === 'INSUFFICIENT_FUNDS' || error.code === 'RATE_LIMIT_EXCEEDED') {
         return res.status(402).json({ 
-          error: 'Insufficient Qredits', 
-          message: `Balance too low. Required: ${OPERATION_COST}`,
+          error: error.message, 
+          message: error.message,
           required: OPERATION_COST 
         });
       }

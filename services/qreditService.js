@@ -1,25 +1,30 @@
 const admin = require('firebase-admin');
 const { db } = require('../config/firestore');
+const RateLimitService = require('./rateLimitService');
 
 class QreditService {
   /**
-   * Deduct Qredits from a user (Hard Deduction).
-   * Throws an error if balance is insufficient.
+   * Deduct Qredits from a user (Hard Deduction) OR Check Rate Limits (Free Mode).
+   * Throws an error if balance is insufficient or rate limit exceeded.
    * @param {string} userId
    * @param {number} amount
    * @param {string} description
+   * @param {string} [category] - Optional category for rate limiting ('chat', 'quiz', 'summary', 'tutorial')
    */
-  static async deduct(userId, amount, description) {
-    // Step A: Free Mode Check
+  static async deduct(userId, amount, description, category) {
+    // Step A: Free Mode Check & Rate Limiting
     const configRef = db.collection('system_settings').doc('config');
     const configSnap = await configRef.get();
     const isFreeMode = configSnap.exists && configSnap.data()?.is_free_mode === true;
     
     if (isFreeMode) {
+      if (category) {
+        await RateLimitService.checkAndIncrement(userId, category);
+      }
       return { success: true, deducted: false, message: 'Free Mode' };
     }
 
-    // Step B: Transaction
+    // Step B: Transaction (Paid Mode)
     const userRef = db.collection('users').doc(userId);
 
     return await db.runTransaction(async (tx) => {

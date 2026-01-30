@@ -57,17 +57,20 @@ router.post('/tutorial/start', async (req, res) => {
     } catch (err) {
       // Mark key as failed so they can retry
       if (idempotencyKey) await admin.firestore().collection('idempotency_keys').doc(idempotencyKey).update({ status: 'FAILED' });
-      throw err;
+      
+      if (err.code === 'INSUFFICIENT_FUNDS' || err.code === 'RATE_LIMIT_EXCEEDED') {
+        return res.status(402).json({ 
+          error: err.message, 
+          message: err.message,
+          details: err 
+        });
+      }
+
+      console.error('Error in /tutorial/start:', err);
+      res.status(500).json({ error: err.message || 'Internal Server Error' });
     }
 
   } catch (err) {
-    if (err.code === 'INSUFFICIENT_FUNDS') {
-      return res.status(402).json({ 
-        error: 'Insufficient Qredits', 
-        message: 'You do not have enough Qredits to start this tutorial.',
-        details: err 
-      });
-    }
     console.error('Error in /tutorial/start:', err);
     res.status(500).json({ error: err.message || 'Internal Server Error' });
   }
