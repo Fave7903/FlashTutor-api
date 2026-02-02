@@ -40,7 +40,8 @@ router.post('/tutorial/start', async (req, res) => {
       if (!text || text.trim().length === 0) throw new Error('No text extracted');
 
       // The service now handles Balance Check + Deduction internally
-      const sessionId = await startTutorialSession(userId, text);
+      // ⚡ PASS FILE NAME TO SERVICE
+      const sessionId = await startTutorialSession(userId, text, fileName || 'Untitled Tutorial');
       
       const responsePayload = { sessionId, message: 'Tutorial session started successfully' };
 
