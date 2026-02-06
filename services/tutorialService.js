@@ -49,18 +49,34 @@ If you are unsure, still return best-effort JSON.`;
 
   let summary = '';
   let rubric = '';
+  
+  // ⚡ FIXED: Robust fallback logic
+  const defaultSummary = 'Key concepts from this section.';
+  const defaultRubric = 'Evaluate the answer based on correctness. If correct, praise. If incorrect, explain gently.';
+
   try {
     const result = await model.generateContent(rubricPrompt);
     const rawText = (await result.response.text())
       .replace(/```json/gi, '')
       .replace(/```/g, '')
       .trim();
+    
+    // Attempt parse
     const parsed = JSON.parse(rawText);
-    summary = parsed.summary || '';
-    rubric = parsed.rubric || '';
+    
+    // Use parsed value OR fallback if empty
+    summary = parsed.summary && parsed.summary.trim() ? parsed.summary : defaultSummary;
+    rubric = parsed.rubric && parsed.rubric.trim() ? parsed.rubric : defaultRubric;
+
   } catch (_) {
-    summary = '';
-    rubric = '';
+    console.warn(`[Tutorial] JSON generation failed for module ${index}. Using fallbacks.`);
+    summary = defaultSummary;
+    rubric = defaultRubric;
+  }
+
+  // Final safety check: If we found a question, we MUST have a rubric
+  if (questionText && (!rubric || rubric === '')) {
+    rubric = defaultRubric;
   }
 
   return {
@@ -72,7 +88,7 @@ If you are unsure, still return best-effort JSON.`;
   };
 }
 
-// ⚡ UPDATED: Fetch session logic
+// Fetch session logic
 async function fetchActiveSession(userId, sessionId) {
   const docRef = tutorialCollectionForUser(userId).doc(sessionId);
   const doc = await docRef.get();
@@ -84,9 +100,6 @@ async function fetchActiveSession(userId, sessionId) {
   const data = doc.data();
   const now = admin.firestore.Timestamp.now();
   
-  // Logic: 
-  // 1. If it IS completed, we allow access regardless of time (Review Mode).
-  // 2. If it is NOT completed, we check if it has expired.
   const isExpired = !data.expireAt || data.expireAt.toMillis() <= now.toMillis();
   const isCompleted = data.completed === true;
 
@@ -168,13 +181,25 @@ async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleInde
       : modules.length - 1;
 
   const module = modules[index];
-  const shouldGrade = Boolean(module?.rubric && typeof moduleIndex === 'number');
+
+  // ⚡ FIXED: Fallback logic for existing broken sessions
+  // If there is a rubric OR a question, we treat it as a grading event.
+  // This ensures 'isAnswer' becomes true, allowing the frontend button to appear.
+  const hasRubric = Boolean(module?.rubric && module.rubric.trim());
+  const hasQuestion = Boolean(module?.question && module.question.trim());
+  
+  const shouldGrade = (hasRubric || hasQuestion) && typeof moduleIndex === 'number';
 
   if (shouldGrade) {
+    // Use stored rubric OR a generic fallback if the stored one is empty
+    const effectiveRubric = hasRubric 
+      ? module.rubric 
+      : "Evaluate the user's answer based on the provided context. If correct, praise them. If incorrect, explain the right answer politely.";
+
     const prompt = `You are "Tutor Qlearit," a friendly, encouraging, and highly intelligent study companion.
     
-    Goal: Evaluate answer based on Rubric.
-    Rubric: ${module.rubric}
+    Goal: Evaluate answer based on Rubric without mentioning rubric.
+    Rubric: ${effectiveRubric}
     User Answer: ${userMessage}
     
     Instructions:
@@ -191,10 +216,11 @@ async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleInde
 
     return {
       response: response.text(),
-      isAnswer: true,
+      isAnswer: true, // This allows the frontend to show the Next button
     };
   }
 
+  // Normal Chat (No grading intended)
   const prompt = `You are "Tutor Qlearit," an expert academic tutor.
   Goal: Answer follow-up based ONLY on context.
   Context: ${module.content}

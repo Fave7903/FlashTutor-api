@@ -11,7 +11,7 @@ router.post('/tutorial/start', async (req, res) => {
 
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
-    // ⚡ IDEMPOTENCY CHECK
+    // Idempotency Check
     if (idempotencyKey) {
       const keyRef = admin.firestore().collection('idempotency_keys').doc(idempotencyKey);
       const keyDoc = await keyRef.get();
@@ -39,13 +39,11 @@ router.post('/tutorial/start', async (req, res) => {
 
       if (!text || text.trim().length === 0) throw new Error('No text extracted');
 
-      // The service now handles Balance Check + Deduction internally
-      // ⚡ PASS FILE NAME TO SERVICE
+      // Start Session (Service handles logic)
       const sessionId = await startTutorialSession(userId, text, fileName || 'Untitled Tutorial');
       
       const responsePayload = { sessionId, message: 'Tutorial session started successfully' };
 
-      // Success - Update Key
       if (idempotencyKey) {
         await admin.firestore().collection('idempotency_keys').doc(idempotencyKey).update({
           status: 'COMPLETED',
@@ -56,14 +54,14 @@ router.post('/tutorial/start', async (req, res) => {
       res.json(responsePayload);
 
     } catch (err) {
-      // Mark key as failed so they can retry
       if (idempotencyKey) await admin.firestore().collection('idempotency_keys').doc(idempotencyKey).update({ status: 'FAILED' });
       
+      // ⚡ UPDATED: Return required amount for frontend display
       if (err.code === 'INSUFFICIENT_FUNDS' || err.code === 'RATE_LIMIT_EXCEEDED') {
         return res.status(402).json({ 
           error: err.message, 
           message: err.message,
-          details: err 
+          required: err.required || 0 
         });
       }
 
@@ -77,7 +75,6 @@ router.post('/tutorial/start', async (req, res) => {
   }
 });
 
-// ... Keep existing routes for /next and /followup ...
 router.post('/tutorial/next', async (req, res) => {
     try {
       const { userId, sessionId } = req.body;
