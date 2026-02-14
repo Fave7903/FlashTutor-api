@@ -1,6 +1,7 @@
 const axios = require('axios');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
+const { google } = require('googleapis');
 const { db } = require('../config/firestore');
 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
@@ -10,14 +11,13 @@ if (!PAYSTACK_SECRET_KEY) {
 }
 
 /**
- * Initialize a Paystack payment transaction
+ * Initialize a Paystack payment transaction (Web Flow)
  * POST /initialize-paystack
  */
 async function initializePaystack(req, res) {
   try {
     const { email, amount, qredit_amount, userId } = req.body;
 
-    // Validation
     if (!email || !amount || !qredit_amount || !userId) {
       return res.status(400).json({
         error: 'Missing required fields: email, amount, qredit_amount, userId'
@@ -30,12 +30,11 @@ async function initializePaystack(req, res) {
       });
     }
 
-    // Call Paystack API
     const response = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
         email,
-        amount: Math.round(amount * 100), // Convert to Kobo (multiply by 100)
+        amount: Math.round(amount * 100), // Convert to Kobo
         metadata: {
           userId,
           qredit_amount,
@@ -58,74 +57,49 @@ async function initializePaystack(req, res) {
     });
   } catch (err) {
     console.error('Error initializing Paystack payment:', err);
-    
     if (err.response) {
-      // Paystack API error
       return res.status(err.response.status || 500).json({
         error: err.response.data?.message || 'Failed to initialize payment'
       });
     }
-
-    res.status(500).json({
-      error: 'Internal Server Error'
-    });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 }
 
 /**
  * Verify Paystack webhook signature
  */
-function verifyPaystackSignature(req, payload) { // Changed arg name to payload
+function verifyPaystackSignature(req, payload) {
   const signature = req.headers['x-paystack-signature'];
-  
-  if (!signature) {
-    return false;
-  }
+  if (!signature) return false;
 
   const hash = crypto
     .createHmac('sha512', PAYSTACK_SECRET_KEY)
-    .update(payload) // payload must be a Buffer or String
+    .update(payload)
     .digest('hex');
 
   return hash === signature;
 }
 
 /**
- * Handle Paystack webhook
+ * Handle Paystack webhook (Web Flow)
  * POST /webhook/paystack
- * 
- * Note: This route must use express.raw() middleware to get the raw body
- * for signature verification. The bodyParser.json() middleware should NOT
- * be applied to this route.
  */
 async function handlePaystackWebhook(req, res) {
   try {
-    // 1. GET THE RAW BUFFER (Strict Mode)
-    // We do NOT use JSON.stringify() as a fallback. It is unreliable.
     const rawBody = req.rawBody;
-    
-    // Safety check: If req.rawBody is missing, it means app.js isn't configured correctly.
-    // We must stop here to prevent security bypasses.
     if (!rawBody) {
         console.error('FATAL: req.rawBody is missing. Check bodyParser config in app.js');
-        // Return 400 so Paystack knows we rejected it (or 500 to make them retry later)
         return res.status(500).json({ error: 'Webhook Configuration Error: Raw body missing' });
     }
 
-    // 2. VERIFY SIGNATURE (Pass the BUFFER)
     const signatureValid = verifyPaystackSignature(req, rawBody);
-    
     if (!signatureValid) {
       console.error('[Webhook] Invalid Paystack signature');
-      // In production, you generally return 200 to stop Paystack from retrying a bad request,
-      // but logging it as a security concern.
       return res.status(200).json({ message: 'Signature verification failed' }); 
     }
 
-    // 3. USE THE PARSED BODY (Safe now because we verified the source)
     const event = req.body;
-
-    // Only process successful charge events
     if (event.event !== 'charge.success') {
       console.log('[Webhook] Ignoring event:', event.event);
       return res.status(200).json({ message: 'Event ignored' });
@@ -148,28 +122,21 @@ async function handlePaystackWebhook(req, res) {
       return res.status(400).json({ error: 'Invalid qredit_amount' });
     }
 
-    // Update user balance and log transaction in a Firestore transaction
     const userRef = db.collection('users').doc(userId);
 
     await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
-      
       if (!userSnap.exists) {
         throw new Error(`User ${userId} not found`);
       }
 
-      // Get current balance
       const currentBalance = userSnap.data().qredit_balance || 0;
       const newBalance = currentBalance + qreditAmount;
 
-      console.log(`[Webhook] Updating balance for user ${userId}: ${currentBalance} -> ${newBalance} (+${qreditAmount})`);
-
-      // Update user balance
       tx.update(userRef, {
         qredit_balance: admin.firestore.FieldValue.increment(qreditAmount)
       });
 
-      // Log transaction
       const txnRef = userRef.collection('transactions').doc();
       tx.set(txnRef, {
         type: 'credit',
@@ -184,23 +151,107 @@ async function handlePaystackWebhook(req, res) {
     });
 
     console.log(`[Webhook] Successfully processed payment for user ${userId}, added ${qreditAmount} Qredits`);
-
-    // Return success quickly to Paystack
     res.status(200).json({ success: true });
   } catch (err) {
     console.error('[Webhook] Error processing Paystack webhook:', err);
-    console.error('[Webhook] Error stack:', err.stack);
-    // Still return 200 to Paystack to prevent retries for our errors
-    // (Paystack will retry on non-2xx responses)
-    res.status(200).json({ 
-      success: false, 
-      error: 'Webhook processed but encountered an error',
-      message: err.message 
+    res.status(200).json({ success: false, error: 'Webhook processed but encountered an error', message: err.message });
+  }
+}
+
+/**
+ * Verify Google Play Purchase (Android Flow)
+ * POST /verify-google-play
+ */
+async function verifyGooglePlayPurchase(req, res) {
+  try {
+    const { purchaseToken, productId, userId, qreditAmount } = req.body;
+
+    if (!purchaseToken || !productId || !userId || !qreditAmount) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+
+    // Initialize Google Auth using Default Application Credentials (same as Firebase)
+    const auth = new google.auth.GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/androidpublisher']
     });
+    const androidpublisher = google.androidpublisher({ version: 'v3', auth });
+
+    // Ensure your Package Name is stored in ENV or fallback to your app ID
+    const packageName = process.env.PACKAGE_NAME || 'com.soartech.qlearit';
+
+    // Verify token with Google's servers
+    const playRes = await androidpublisher.purchases.products.get({
+      packageName: packageName,
+      productId: productId,
+      token: purchaseToken,
+    });
+
+    // purchaseState 0 means "Purchased"
+    if (playRes.data.purchaseState !== 0) {
+      return res.status(400).json({ error: 'Purchase is pending or cancelled.' });
+    }
+
+    const userRef = db.collection('users').doc(userId);
+    const tokenRef = db.collection('purchase_tokens').doc(purchaseToken);
+
+    await db.runTransaction(async (tx) => {
+      // 1. Check for Replay Attack / Duplicates
+      const tokenSnap = await tx.get(tokenRef);
+      if (tokenSnap.exists) {
+        throw new Error('Purchase token already consumed');
+      }
+
+      // 2. Ensure User Exists
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) {
+        throw new Error('User not found');
+      }
+
+      const currentBalance = userSnap.data().qredit_balance || 0;
+      const newBalance = currentBalance + Number(qreditAmount);
+
+      // 3. Update Balance
+      tx.update(userRef, {
+        qredit_balance: admin.firestore.FieldValue.increment(Number(qreditAmount))
+      });
+
+      // 4. Lock Purchase Token
+      tx.set(tokenRef, {
+        userId,
+        productId,
+        qreditAmount,
+        status: 'consumed',
+        created_at: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // 5. Log Transaction
+      const txnRef = userRef.collection('transactions').doc();
+      tx.set(txnRef, {
+        type: 'credit',
+        amount: Number(qreditAmount),
+        source: 'google_play',
+        play_product_id: productId,
+        play_purchase_token: purchaseToken,
+        balance_before: currentBalance,
+        balance_after: newBalance,
+        created_at: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    console.log(`[GooglePlay] Successfully processed payment for user ${userId}, added ${qreditAmount} Qredits`);
+    res.status(200).json({ success: true, message: 'Qredits added successfully' });
+
+  } catch (err) {
+    console.error('[GooglePlay] Verification Error:', err);
+    if (err.message === 'Purchase token already consumed') {
+      return res.status(200).json({ success: true, message: 'Already consumed' }); // Safely acknowledge
+    }
+    res.status(500).json({ error: err.message || 'Verification failed' });
   }
 }
 
 module.exports = {
   initializePaystack,
-  handlePaystackWebhook
+  handlePaystackWebhook,
+  verifyGooglePlayPurchase
 };
