@@ -137,28 +137,8 @@ async function generateQuizFromText(text, options = {}) {
   }
 }
 
-// async function generateQuizFromText(text, options = {}) {
-//   const { numMcq = 15, numTf = 5 } = options;
-//   const prompt = `Create a study quiz from the text below. Return STRICT JSON only with shape: {"questions": [{"question": string, "options": string[], "answer": string}]}.\n- Include exactly ${numMcq} multiple-choice items.\n- Include ${numTf} true/false by using options ["True","False"] and answer must be either "True" or "False".\nTEXT:\n${text}`;
-//   const result = await model.generateContent(prompt);
-//   const raw = (await result.response.text()).replace(/```json/g, '').replace(/```/g, '').trim();
-//   try {
-//     const parsed = JSON.parse(raw);
-//     const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
-//     const normalized = questions.map((q) => {
-//       const question = (q.question || q.prompt || '').toString();
-//       const options = Array.isArray(q.options) ? q.options.map((o) => o.toString()) : [];
-//       const answer = (q.answer || '').toString();
-//       return { question, options, answer };
-//     });
-//     return { questions: normalized };
-//   } catch (e) {
-//     console.error('Quiz JSON parse failed:', e.message);
-//     return { questions: [] };
-//   }
-// }
-
-async function generateTutorialModule(paragraphText, moduleIndex = 0) {
+// ⚡ ADDED username PARAMETER HERE (defaults to empty string) ⚡
+async function generateTutorialModule(paragraphText, moduleIndex = 0, username = '') {
   // For the first module, use a welcoming prompt. For subsequent modules, be continuous.
   const introText = moduleIndex === 0 
     ? `You are Qlearit, an expert, fun, and engaging AI tutor. I'll be teaching you step by step. Let's begin!\n\n`
@@ -179,6 +159,11 @@ async function generateTutorialModule(paragraphText, moduleIndex = 0) {
    - **Conflict Prevention:** Never put standard text descriptions inside a LaTeX math block.
 `;
 
+  // ⚡ INJECT PERSONALIZATION IF USERNAME IS PROVIDED ⚡
+  const personalTouch = username 
+    ? `\n- Personalization: Occasionally address the student by their name (${username}) to build a friendly connection.` 
+    : '';
+
   const tutorialPrompt = `${introText}Teach this concept clearly and simply. Explain step-by-step, then ask ONE comprehension question at the end to check understanding.
 
 Teaching style:
@@ -186,7 +171,7 @@ Teaching style:
 - Engaging with light humor
 - Interactive: ask questions to check understanding
 - Motivational: encourage learning
-- Concise to keep tokens minimal
+- Concise to keep tokens minimal${personalTouch}
 
 ${formattingRules}
 
@@ -211,42 +196,6 @@ Now teach this concept and ask ONE comprehension question at the end.`;
   };
 }
 
-// async function generateTutorialModule(paragraphText, moduleIndex = 0) {
-//   // For the first module, use a welcoming prompt. For subsequent modules, be continuous.
-//   const introText = moduleIndex === 0 
-//     ? `You are Qlearit, an expert, fun, and engaging AI tutor. I'll be teaching you step by step. Let's begin!\n\n`
-//     : `Continuing with the next concept:\n\n`;
-  
-//   const tutorialPrompt = `${introText}Teach this concept clearly and simply. Explain step-by-step, then ask ONE comprehension question at the end to check understanding.
-
-// Teaching style:
-// - Clear and step-by-step
-// - Engaging with light humor
-// - Interactive: ask questions to check understanding
-// - Motivational: encourage learning
-// - Concise to keep tokens minimal
-
-// Paragraph to teach:
-// ${paragraphText}
-
-// Now teach this concept and ask ONE comprehension question at the end.`;
-
-//   const result = await model.generateContent(tutorialPrompt);
-//   const response = await result.response;
-//   const text = response.text();
-  
-//   // Try to detect if there's a question in the response
-//   const questionIndicators = ['?', 'question', 'what', 'how', 'why', 'which', 'can you'];
-//   const hasQuestion = questionIndicators.some(indicator => 
-//     text.toLowerCase().includes(indicator.toLowerCase())
-//   );
-  
-//   return {
-//     text,
-//     isQuestion: hasQuestion,
-//   };
-// }
-
 module.exports = {
   sendMessageWithRetry,
   summarizeLongText,
@@ -254,4 +203,3 @@ module.exports = {
   generateTutorialModule,
   model,
 };
-

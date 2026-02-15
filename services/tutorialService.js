@@ -14,9 +14,10 @@ function tutorialCollectionForUser(userId) {
   return db.collection(USERS_COLLECTION).doc(userId).collection('tutorials');
 }
 
-async function generateLearningModule(paragraph, index) {
+// ⚡ ADDED: username parameter ⚡
+async function generateLearningModule(paragraph, index, username = '') {
   // First, generate the rich tutorial text (explanation + embedded question)
-  const tutorial = await generateTutorialModule(paragraph, index);
+  const tutorial = await generateTutorialModule(paragraph, index, username);
   const text = tutorial.text;
 
   // Try to extract the explicit question from the generated text
@@ -50,7 +51,7 @@ If you are unsure, still return best-effort JSON.`;
   let summary = '';
   let rubric = '';
   
-  // ⚡ FIXED: Robust fallback logic
+  // Robust fallback logic
   const defaultSummary = 'Key concepts from this section.';
   const defaultRubric = 'Evaluate the answer based on correctness. If correct, praise. If incorrect, explain gently.';
 
@@ -119,6 +120,19 @@ async function startTutorialSession(userId, text, fileName = 'Untitled Tutorial'
     throw new Error('No paragraphs extracted from text');
   }
 
+  // ⚡ FETCH USERNAME EFFICIENTLY ONCE PER SESSION ⚡
+  let username = '';
+  try {
+    const userDoc = await db.collection(USERS_COLLECTION).doc(userId).get();
+    if (userDoc.exists) {
+      const userData = userDoc.data();
+      // Adjust this to match whatever field name you use for the user's name
+      username = userData.username || '';
+    }
+  } catch (err) {
+    console.warn(`[Tutorial] Could not fetch username for user ${userId}:`, err.message);
+  }
+
   const BASE_UPLOAD_COST = 0;
   const CHUNK_COST = 1; 
   const totalCost = BASE_UPLOAD_COST + (paragraphs.length * CHUNK_COST);
@@ -128,7 +142,8 @@ async function startTutorialSession(userId, text, fileName = 'Untitled Tutorial'
 
   try {
     const modules = await Promise.all(
-      paragraphs.map((paragraph, index) => generateLearningModule(paragraph, index))
+      // ⚡ Pass the fetched username down to the generator ⚡
+      paragraphs.map((paragraph, index) => generateLearningModule(paragraph, index, username))
     );
 
     const payload = {
@@ -182,7 +197,7 @@ async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleInde
 
   const module = modules[index];
 
-  // ⚡ FIXED: Fallback logic for existing broken sessions
+  // Fallback logic for existing broken sessions
   // If there is a rubric OR a question, we treat it as a grading event.
   // This ensures 'isAnswer' becomes true, allowing the frontend button to appear.
   const hasRubric = Boolean(module?.rubric && module.rubric.trim());
