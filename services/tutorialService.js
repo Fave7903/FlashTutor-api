@@ -15,6 +15,82 @@ function tutorialCollectionForUser(userId) {
 }
 
 // ⚡ ADDED: username parameter ⚡
+// async function generateLearningModule(paragraph, index, username = '') {
+//   // First, generate the rich tutorial text (explanation + embedded question)
+//   const tutorial = await generateTutorialModule(paragraph, index, username);
+//   const text = tutorial.text;
+
+//   // Try to extract the explicit question from the generated text
+//   let questionText = '';
+//   const lines = text.split('\n');
+//   for (let i = lines.length - 1; i >= 0; i--) {
+//     const line = lines[i].trim();
+//     if (!line) continue;
+//     if (line.includes('?') || line.toLowerCase().includes('question')) {
+//       questionText = line;
+//       break;
+//     }
+//   }
+
+//   // Get a one-sentence summary + rubric for grading
+//   const rubricPrompt = `You are Qlearit. Given the original paragraph and the tutorial explanation with its question, produce STRICT JSON:
+// {
+//   "summary": string,
+//   "rubric": string
+// }
+// Return ONLY JSON, no prose or fences.
+
+// Original paragraph:
+// ${paragraph}
+
+// Tutorial explanation:
+// ${text}
+
+// If you are unsure, still return best-effort JSON.`;
+
+//   let summary = '';
+//   let rubric = '';
+  
+//   // Robust fallback logic
+//   const defaultSummary = 'Key concepts from this section.';
+//   const defaultRubric = 'Evaluate the answer based on correctness. If correct, praise. If incorrect, explain gently.';
+
+//   try {
+//     const result = await model.generateContent(rubricPrompt);
+//     const rawText = (await result.response.text())
+//       .replace(/```json/gi, '')
+//       .replace(/```/g, '')
+//       .trim();
+    
+//     // Attempt parse
+//     const parsed = JSON.parse(rawText);
+    
+//     // Use parsed value OR fallback if empty
+//     summary = parsed.summary && parsed.summary.trim() ? parsed.summary : defaultSummary;
+//     rubric = parsed.rubric && parsed.rubric.trim() ? parsed.rubric : defaultRubric;
+
+//   } catch (_) {
+//     console.warn(`[Tutorial] JSON generation failed for module ${index}. Using fallbacks.`);
+//     summary = defaultSummary;
+//     rubric = defaultRubric;
+//   }
+
+//   // Final safety check: If we found a question, we MUST have a rubric
+//   if (questionText && (!rubric || rubric === '')) {
+//     rubric = defaultRubric;
+//   }
+
+//   return {
+//     index,
+//     content: text,
+//     summary,
+//     question: questionText,
+//     rubric,
+//   };
+// }
+
+
+// ⚡ ADDED: username parameter ⚡
 async function generateLearningModule(paragraph, index, username = '') {
   // First, generate the rich tutorial text (explanation + embedded question)
   const tutorial = await generateTutorialModule(paragraph, index, username);
@@ -32,45 +108,60 @@ async function generateLearningModule(paragraph, index, username = '') {
     }
   }
 
-  // Get a one-sentence summary + rubric for grading
-  const rubricPrompt = `You are Qlearit. Given the original paragraph and the tutorial explanation with its question, produce STRICT JSON:
-{
-  "summary": string,
-  "rubric": string
-}
-Return ONLY JSON, no prose or fences.
+  // 1. Define the Strict Schema
+  // Note: Depending on your @google/generative-ai SDK version, you can use 
+  // the string "OBJECT"/"STRING" or import { SchemaType } and use SchemaType.OBJECT
+  const tutorialMetaSchema = {
+    type: "OBJECT",
+    properties: {
+      summary: { 
+        type: "STRING",
+        description: "A concise, one-sentence summary of the key concepts taught in the tutorial explanation."
+      },
+      rubric: { 
+        type: "STRING",
+        description: "Strict grading criteria for the comprehension question. State exactly what makes an answer correct, partially correct, or incorrect."
+      }
+    },
+    required: ["summary", "rubric"]
+  };
 
-Original paragraph:
-${paragraph}
+  // 2. Simplified Prompt (No need to beg for JSON anymore)
+  const rubricPrompt = `You are Qlearit. Given the original paragraph and the tutorial explanation, extract the summary and create a grading rubric.
 
-Tutorial explanation:
-${text}
+  Original paragraph:
+  ${paragraph}
 
-If you are unsure, still return best-effort JSON.`;
+  Tutorial explanation:
+  ${text}`;
 
   let summary = '';
   let rubric = '';
   
-  // Robust fallback logic
   const defaultSummary = 'Key concepts from this section.';
   const defaultRubric = 'Evaluate the answer based on correctness. If correct, praise. If incorrect, explain gently.';
 
   try {
-    const result = await model.generateContent(rubricPrompt);
-    const rawText = (await result.response.text())
-      .replace(/```json/gi, '')
-      .replace(/```/g, '')
-      .trim();
-    
-    // Attempt parse
+    // 3. Pass the schema into generationConfig
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: rubricPrompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: tutorialMetaSchema
+      }
+    });
+
+    // The response is now mathematically guaranteed to be valid JSON matching your schema
+    const rawText = result.response.text();
     const parsed = JSON.parse(rawText);
     
-    // Use parsed value OR fallback if empty
-    summary = parsed.summary && parsed.summary.trim() ? parsed.summary : defaultSummary;
-    rubric = parsed.rubric && parsed.rubric.trim() ? parsed.rubric : defaultRubric;
+    summary = parsed.summary;
+    rubric = parsed.rubric;
 
-  } catch (_) {
-    console.warn(`[Tutorial] JSON generation failed for module ${index}. Using fallbacks.`);
+  } catch (err) {
+    // This catch block will now only trigger on actual network failures 
+    // or API outages, not formatting errors!
+    console.error(`[Qlearit] Schema generation failed for module ${index}:`, err.message);
     summary = defaultSummary;
     rubric = defaultRubric;
   }
