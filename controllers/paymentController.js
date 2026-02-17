@@ -176,11 +176,13 @@ async function verifyGooglePlayPurchase(req, res) {
     }
     const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 
+    const cleanPrivateKey = credentials.private_key.replace(/\\n/g, '\n');
+
   // 2. Pass the credentials explicitly
     const auth = new google.auth.GoogleAuth({
       credentials: {
         client_email: credentials.client_email,
-        private_key: credentials.private_key,
+        private_key: cleanPrivateKey,
       },
       scopes: ['https://www.googleapis.com/auth/androidpublisher']
     });
