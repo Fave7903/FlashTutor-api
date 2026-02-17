@@ -170,8 +170,18 @@ async function verifyGooglePlayPurchase(req, res) {
       return res.status(400).json({ error: 'Missing required parameters' });
     }
 
-    // Initialize Google Auth using Default Application Credentials (same as Firebase)
+    // 1. Read and parse the JSON string from Azure environment variables
+    if (!process.env.GOOGLE_CREDENTIALS_JSON) {
+      throw new Error("Missing GOOGLE_CREDENTIALS_JSON environment variable");
+    }
+    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+
+  // 2. Pass the credentials explicitly
     const auth = new google.auth.GoogleAuth({
+      credentials: {
+        client_email: credentials.client_email,
+        private_key: credentials.private_key,
+      },
       scopes: ['https://www.googleapis.com/auth/androidpublisher']
     });
     const androidpublisher = google.androidpublisher({ version: 'v3', auth });
