@@ -5,7 +5,7 @@ const LIMITS = {
   chat: 20,
   quiz: 5,
   summary: 5,
-  tutorial: 2
+  tutorial: 3
 };
 
 class RateLimitService {

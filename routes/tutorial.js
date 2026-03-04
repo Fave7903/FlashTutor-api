@@ -3,6 +3,7 @@ const router = express.Router();
 const admin = require('firebase-admin');
 const { downloadFileBytes, parseBufferToText, inferFileTypeFromName } = require('../utils/fileUtils');
 const { startTutorialSession, getNextTutorialModule, handleTutorialFollowUp } = require('../services/tutorialService');
+const RateLimitService = require('../services/rateLimitService');
 
 router.post('/tutorial/start', async (req, res) => {
   try {
@@ -24,6 +25,8 @@ router.post('/tutorial/start', async (req, res) => {
         await keyRef.set({ status: 'PROCESSING', userId, createdAt: admin.firestore.FieldValue.serverTimestamp() });
       }
     }
+
+    await RateLimitService.checkAndIncrement(userId, 'tutorial');
 
     // Processing Logic
     let text = '';

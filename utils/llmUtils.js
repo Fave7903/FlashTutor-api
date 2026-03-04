@@ -12,27 +12,80 @@ async function sendMessageWithRetry(chat, message, retries = 3) {
   }
 }
 
+
 // async function summarizeLongText(text) {
 //   const chunks = chunkText(text);
 //   if (chunks.length === 0) return { bullets: [], overview: '', keyTerms: [] };
-//   const partialSummaries = [];
-//   for (const chunk of chunks) {
-//     const prompt = `Summarize the following text into 5-10 concise bullet points, and list 3-7 key terms.\n\nTEXT:\n${chunk}`;
-//     const result = await model.generateContent(prompt);
-//     const response = await result.response;
-//     partialSummaries.push(response.text());
-//   }
-//   const combined = partialSummaries.join('\n');
-//   const finalPrompt = `You are given multiple partial summaries of a document.\nReturn strict JSON with keys: bullets (string[]), overview (string), keyTerms (string[]).\n\nPARTIAL SUMMARIES:\n${combined}`;
-//   const final = await model.generateContent(finalPrompt);
-//   const finalText = (await final.response.text())
-//     .replace(/```json/g, '')
-//     .replace(/```/g, '')
-//     .trim();
+
+//   console.log(`🚀 Summarizing ${chunks.length} chunks...`);
+
+//   // --- 1. PARALLEL PROCESSING ---
+//   // We map over all chunks simultaneously instead of waiting in a loop.
+//   // We also ask for a mini-overview here so the final step has narrative context.
+//   const partialSummaries = await Promise.all(chunks.map(async (chunk, index) => {
+//     const prompt = `Summarize this text section. Provide a 2-sentence overview, 3-5 key bullet points, and 3-5 key terms.\n\nTEXT:\n${chunk}`;
+//     try {
+//       const result = await model.generateContent(prompt);
+//       return (await result.response).text();
+//     } catch (e) {
+//       console.warn(`Chunk ${index} failed, skipping...`);
+//       return ''; 
+//     }
+//   }));
+
+//   const combined = partialSummaries.filter(Boolean).join('\n\n---NEXT SECTION---\n\n');
+
+//   // --- 2. NATIVE JSON SCHEMA ---
+//   // This forces Gemini to return a perfect Javascript object. No regex needed.
+//   const summarySchema = {
+//     type: "OBJECT",
+//     properties: {
+//       overview: { type: "STRING" },
+//       bullets: { type: "ARRAY", items: { type: "STRING" } },
+//       keyTerms: { type: "ARRAY", items: { type: "STRING" } }
+//     },
+//     required: ["overview", "bullets", "keyTerms"]
+//   };
+
+//   // --- 3. CONSOLIDATION PROMPT ---
+//   // Explicitly tell the model HOW to synthesize the massive text into a final form.
+//   const finalPrompt = `You are an expert academic summarizer. I am giving you partial summaries of a larger document. 
+//   Synthesize them into one cohesive, final master summary.
+  
+//   REQUIREMENTS:
+//   1. 'overview': Write a cohesive 3-4 sentence narrative overview of the entire document.
+//   2. 'bullets': Extract exactly 7-10 of the most critical bullet points overall.
+//   3. 'keyTerms': Extract exactly 5-8 of the most important key terms overall.
+
+//   PARTIAL SUMMARIES:
+//   ${combined}`;
+
 //   try {
-//     return JSON.parse(finalText);
-//   } catch (_) {
-//     return { bullets: combined.split('\n').filter(Boolean), overview: '', keyTerms: [] };
+//     const finalResult = await model.generateContent({
+//       contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+//       generationConfig: {
+//         responseMimeType: "application/json",
+//         responseSchema: summarySchema,
+//         temperature: 0.3, // Lower temp = more factual/focused summaries
+//       }
+//     });
+
+//     const data = JSON.parse(finalResult.response.text());
+    
+//     // Safety fallback in case the model returns empty arrays
+//     return {
+//       overview: data.overview || 'No overview generated.',
+//       bullets: data.bullets && data.bullets.length > 0 ? data.bullets : ['No bullet points generated.'],
+//       keyTerms: data.keyTerms && data.keyTerms.length > 0 ? data.keyTerms : ['No key terms generated.']
+//     };
+
+//   } catch (error) {
+//     console.error("Critical Summary Generation Error:", error);
+//     return { 
+//       overview: 'Failed to synthesize summary.', 
+//       bullets: ['An error occurred while generating the summary.'], 
+//       keyTerms: [] 
+//     };
 //   }
 // }
 
@@ -43,10 +96,9 @@ async function summarizeLongText(text) {
   console.log(`🚀 Summarizing ${chunks.length} chunks...`);
 
   // --- 1. PARALLEL PROCESSING ---
-  // We map over all chunks simultaneously instead of waiting in a loop.
-  // We also ask for a mini-overview here so the final step has narrative context.
   const partialSummaries = await Promise.all(chunks.map(async (chunk, index) => {
-    const prompt = `Summarize this text section. Provide a 2-sentence overview, 3-5 key bullet points, and 3-5 key terms.\n\nTEXT:\n${chunk}`;
+    // ⚡ Make the chunk prompt demand extreme detail
+    const prompt = `You are an expert tutor. Extract highly detailed notes from this section. Include a comprehensive overview, exhaustive key bullet points (with sub-points if necessary), and all crucial key terms with their definitions.\n\nTEXT:\n${chunk}`;
     try {
       const result = await model.generateContent(prompt);
       return (await result.response).text();
@@ -59,26 +111,25 @@ async function summarizeLongText(text) {
   const combined = partialSummaries.filter(Boolean).join('\n\n---NEXT SECTION---\n\n');
 
   // --- 2. NATIVE JSON SCHEMA ---
-  // This forces Gemini to return a perfect Javascript object. No regex needed.
   const summarySchema = {
     type: "OBJECT",
     properties: {
-      overview: { type: "STRING" },
-      bullets: { type: "ARRAY", items: { type: "STRING" } },
-      keyTerms: { type: "ARRAY", items: { type: "STRING" } }
+      overview: { type: "STRING", description: "A detailed, multi-paragraph overview of the entire material." },
+      bullets: { type: "ARRAY", items: { type: "STRING", description: "Extensive, highly detailed study points. Use Markdown for bolding and structure." } },
+      keyTerms: { type: "ARRAY", items: { type: "STRING", description: "Key terms AND their definitions." } }
     },
     required: ["overview", "bullets", "keyTerms"]
   };
 
   // --- 3. CONSOLIDATION PROMPT ---
-  // Explicitly tell the model HOW to synthesize the massive text into a final form.
-  const finalPrompt = `You are an expert academic summarizer. I am giving you partial summaries of a larger document. 
-  Synthesize them into one cohesive, final master summary.
+  // ⚡ Updated to force comprehensive output
+  const finalPrompt = `You are an expert academic summarizer preparing a student for a final exam. I am giving you detailed notes from a larger document. 
+  Synthesize them into one cohesive, comprehensive, and highly detailed master summary.
   
   REQUIREMENTS:
-  1. 'overview': Write a cohesive 3-4 sentence narrative overview of the entire document.
-  2. 'bullets': Extract exactly 7-10 of the most critical bullet points overall.
-  3. 'keyTerms': Extract exactly 5-8 of the most important key terms overall.
+  1. 'overview': Write a highly detailed, comprehensive narrative overview (2-3 paragraphs) capturing all major themes and concepts.
+  2. 'bullets': Extract 12-20 of the most critical topics. Make each point highly detailed. Use Markdown (e.g., bolding key phrases) to make it easy to study. You MUST include sub-points within a bullet if needed to explain a concept fully.
+  3. 'keyTerms': Extract 10-15 crucial key terms and provide a concise definition for each in the format "**Term:** Definition".
 
   PARTIAL SUMMARIES:
   ${combined}`;
@@ -89,13 +140,12 @@ async function summarizeLongText(text) {
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: summarySchema,
-        temperature: 0.3, // Lower temp = more factual/focused summaries
+        temperature: 0.3, 
       }
     });
 
     const data = JSON.parse(finalResult.response.text());
     
-    // Safety fallback in case the model returns empty arrays
     return {
       overview: data.overview || 'No overview generated.',
       bullets: data.bullets && data.bullets.length > 0 ? data.bullets : ['No bullet points generated.'],
