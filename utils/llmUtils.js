@@ -90,27 +90,54 @@ async function sendMessageWithRetry(chat, message, retries = 3) {
 // }
 
 async function summarizeLongText(text) {
-  const chunks = chunkText(text);
+  // ---------------------------------------------------------
+  // 🛡️ FIX 1: SAFETY CAPS FOR MASSIVE DOCUMENTS (Textbooks)
+  // ---------------------------------------------------------
+  const cleanText = text.substring(0, 150000); 
+  let chunks = chunkText(cleanText);
+
+  // Hard cap chunks to prevent the final prompt from exploding the context window
+  if (chunks.length > 15) {
+    console.warn(`Text too large. Capping at 15 chunks.`);
+    chunks = chunks.slice(0, 15);
+  }
+
   if (chunks.length === 0) return { bullets: [], overview: '', keyTerms: [] };
 
-  console.log(`🚀 Summarizing ${chunks.length} chunks...`);
+  console.log(`🚀 Summarizing ${chunks.length} chunks with batching...`);
 
-  // --- 1. PARALLEL PROCESSING ---
-  const partialSummaries = await Promise.all(chunks.map(async (chunk, index) => {
-    // ⚡ Make the chunk prompt demand extreme detail
-    const prompt = `You are an expert tutor. Extract highly detailed notes from this section. Include a comprehensive overview, exhaustive key bullet points (with sub-points if necessary), and all crucial key terms with their definitions.\n\nTEXT:\n${chunk}`;
-    try {
-      const result = await model.generateContent(prompt);
-      return (await result.response).text();
-    } catch (e) {
-      console.warn(`Chunk ${index} failed, skipping...`);
-      return ''; 
+  // ---------------------------------------------------------
+  // ⏱️ FIX 2: BATCH PROCESSING (Prevents 429 Rate Limits)
+  // ---------------------------------------------------------
+  const partialSummaries = [];
+  const BATCH_SIZE = 4;
+
+  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+    const batch = chunks.slice(i, i + BATCH_SIZE);
+    console.log(`   -> Processing batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(chunks.length / BATCH_SIZE)}...`);
+    
+    const batchResults = await Promise.all(batch.map(async (chunk, index) => {
+      // 🧠 FIX 3: SOFTENED PROMPT FOR SHORT DOCUMENTS
+      const prompt = `You are an expert tutor. Extract highly detailed notes from this section. Include a comprehensive overview, exhaustive key bullet points (with sub-points if necessary), and all crucial key terms with their definitions. Do not invent information.\n\nTEXT:\n${chunk}`;
+      try {
+        const result = await model.generateContent(prompt);
+        return (await result.response).text();
+      } catch (e) {
+        console.warn(`Chunk ${i + index} failed, skipping...`);
+        return ''; 
+      }
+    }));
+    
+    partialSummaries.push(...batchResults);
+    
+    // Anti-rate-limit delay: Wait 2 seconds between batches
+    if (i + BATCH_SIZE < chunks.length) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
-  }));
+  }
 
   const combined = partialSummaries.filter(Boolean).join('\n\n---NEXT SECTION---\n\n');
 
-  // --- 2. NATIVE JSON SCHEMA ---
   const summarySchema = {
     type: "OBJECT",
     properties: {
@@ -121,15 +148,16 @@ async function summarizeLongText(text) {
     required: ["overview", "bullets", "keyTerms"]
   };
 
-  // --- 3. CONSOLIDATION PROMPT ---
-  // ⚡ Updated to force comprehensive output
+  // ---------------------------------------------------------
+  // ⚖️ FIX 4: DYNAMIC CONSOLIDATION PROMPT
+  // ---------------------------------------------------------
   const finalPrompt = `You are an expert academic summarizer preparing a student for a final exam. I am giving you detailed notes from a larger document. 
   Synthesize them into one cohesive, comprehensive, and highly detailed master summary.
   
   REQUIREMENTS:
-  1. 'overview': Write a highly detailed, comprehensive narrative overview (2-3 paragraphs) capturing all major themes and concepts.
-  2. 'bullets': Extract 12-20 of the most critical topics. Make each point highly detailed. Use Markdown (e.g., bolding key phrases) to make it easy to study. You MUST include sub-points within a bullet if needed to explain a concept fully.
-  3. 'keyTerms': Extract 10-15 crucial key terms and provide a concise definition for each in the format "**Term:** Definition".
+  1. 'overview': Write a highly detailed, comprehensive narrative overview capturing all major themes and concepts.
+  2. 'bullets': Extract ALL critical topics. Make each point highly detailed with sub-points. Use Markdown (e.g., bolding key phrases). For long documents, aim for 10-20 points. For shorter documents, extract only as many as the text genuinely supports without inventing information.
+  3. 'keyTerms': Extract all crucial key terms and provide a concise definition for each in the format "**Term:** Definition". Do not invent terms.
 
   PARTIAL SUMMARIES:
   ${combined}`;
@@ -141,6 +169,10 @@ async function summarizeLongText(text) {
         responseMimeType: "application/json",
         responseSchema: summarySchema,
         temperature: 0.3, 
+        // ---------------------------------------------------------
+        // 📏 FIX 5: PREVENT JSON TRUNCATION
+        // ---------------------------------------------------------
+        maxOutputTokens: 8192, 
       }
     });
 
@@ -154,11 +186,7 @@ async function summarizeLongText(text) {
 
   } catch (error) {
     console.error("Critical Summary Generation Error:", error);
-    return { 
-      overview: 'Failed to synthesize summary.', 
-      bullets: ['An error occurred while generating the summary.'], 
-      keyTerms: [] 
-    };
+    throw new Error("Failed to generate detailed summary. The file might be too short or complex for this format.");
   }
 }
 

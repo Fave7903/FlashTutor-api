@@ -42,7 +42,7 @@ class RateLimitService {
       const currentCount = data[actionType] || 0;
 
       if (currentCount >= limit) {
-        const error = new Error(`Daily limit reached for ${actionType}s (${limit}/${limit}). Try again tomorrow.`);
+        const error = new Error(`Daily limit reached for ${actionType} (${limit}/${limit}). Try again tomorrow.`);
         error.code = 'RATE_LIMIT_EXCEEDED';
         throw error;
       }
