@@ -16,6 +16,7 @@ const app = express();
 app.use(cors());
 // app.use(bodyParser.json());
 app.use(express.json({
+  limit: '50mb',
   verify: (req, res, buf) => {
     // This catches the raw buffer before it's parsed to JSON
     req.rawBody = buf;
