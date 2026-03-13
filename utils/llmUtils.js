@@ -94,7 +94,7 @@ async function summarizeLongText(text) {
   // 🛡️ FIX 1: SAFETY CAPS FOR MASSIVE DOCUMENTS (Textbooks)
   // ---------------------------------------------------------
   const cleanText = text.substring(0, 150000); 
-  let chunks = chunkText(cleanText);
+  let chunks = chunkText(cleanText, 15000);
 
   // Hard cap chunks to prevent the final prompt from exploding the context window
   if (chunks.length > 15) {

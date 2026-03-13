@@ -28,11 +28,19 @@ router.post('/chat', async (req, res) => {
       await RateLimitService.checkAndIncrement(userId, 'chat');
     }
 
-    // 3. Process Chat
-    const chat = model.startChat({ history });
-    const result = await sendMessageWithRetry(chat, newMessage);
-    const response = await result.response;
-    res.json({ response: response.text() });
+   // 3. Process Chat
+   const chat = model.startChat({ history });
+   const result = await sendMessageWithRetry(chat, newMessage);
+   const response = await result.response;
+   
+   // ⚡ NEW: Extract the raw parts array to preserve thought signatures
+   const rawParts = response.candidates[0].content.parts;
+
+   // ⚡ NEW: Send both the text and the parts back to Flutter
+   res.json({ 
+     response: response.text(),
+     parts: rawParts
+   });
 
   } catch (err) {
     if (err.code === 'RATE_LIMIT_EXCEEDED') {

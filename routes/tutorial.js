@@ -91,15 +91,28 @@ router.post('/tutorial/next', async (req, res) => {
 });
   
 router.post('/tutorial/followup', async (req, res) => {
-    try {
-      const { userId, sessionId, question, moduleIndex } = req.body;
-      if (!userId || !sessionId || !question) return res.status(400).json({ error: 'userId, sessionId and question are required' });
-      const result = await handleTutorialFollowUp(userId, sessionId, question, Number.isInteger(moduleIndex) ? moduleIndex : undefined);
-      res.json(result);
-    } catch (err) {
-      console.error('Error in /tutorial/followup:', err);
-      res.status(500).json({ error: err.message || 'Internal Server Error' });
+  try {
+    // 1. Extract history from req.body
+    const { userId, sessionId, question, moduleIndex, history } = req.body; 
+    
+    if (!userId || !sessionId || !question) {
+        return res.status(400).json({ error: 'userId, sessionId and question are required' });
     }
+    
+    // 2. Pass history as the 5th argument to the service
+    const result = await handleTutorialFollowUp(
+        userId, 
+        sessionId, 
+        question, 
+        Number.isInteger(moduleIndex) ? moduleIndex : undefined,
+        history 
+    );
+    
+    res.json(result);
+  } catch (err) {
+    console.error('Error in /tutorial/followup:', err);
+    res.status(500).json({ error: err.message || 'Internal Server Error' });
+  }
 });
 
 module.exports = router;

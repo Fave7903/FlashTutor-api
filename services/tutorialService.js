@@ -1,4 +1,5 @@
-const { extractParagraphs } = require('../utils/fileUtils');
+// const { extractParagraphs } = require('../utils/fileUtils');
+const { chunkText } = require('../utils/fileUtils');
 const { model, generateTutorialModule } = require('../utils/llmUtils');
 const { admin, db } = require('../config/firestore');
 const QreditService = require('./qreditService');
@@ -206,7 +207,7 @@ async function fetchActiveSession(userId, sessionId) {
  * Start a new tutorial session
  */
 async function startTutorialSession(userId, text, fileName = 'Untitled Tutorial') {
-  const paragraphs = extractParagraphs(text);
+  const paragraphs = chunkText(text);
   if (paragraphs.length === 0) {
     throw new Error('No paragraphs extracted from text');
   }
@@ -273,7 +274,8 @@ async function getNextTutorialModule(userId, sessionId) {
   };
 }
 
-async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleIndex) {
+// 1. Add history = [] to the parameters
+async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleIndex, history = []) {
   const { data } = await fetchActiveSession(userId, sessionId);
   const modules = Array.isArray(data.modules) ? data.modules : [];
 
@@ -288,32 +290,52 @@ async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleInde
 
   const module = modules[index];
 
-  // Fallback logic for existing broken sessions
-  // If there is a rubric OR a question, we treat it as a grading event.
-  // This ensures 'isAnswer' becomes true, allowing the frontend button to appear.
+  // 2. BUILD THE HISTORY STRING
+  let historyText = "";
+  if (history && history.length > 0) {
+    historyText = "\n--- CONVERSATION HISTORY ---\n";
+    history.forEach(msg => {
+      const role = msg.role === 'user' ? 'Student' : 'Tutor';
+      historyText += `${role}: ${msg.text}\n`;
+    });
+    historyText += "----------------------------\n";
+  }
+
   const hasRubric = Boolean(module?.rubric && module.rubric.trim());
   const hasQuestion = Boolean(module?.question && module.question.trim());
   
   const shouldGrade = (hasRubric || hasQuestion) && typeof moduleIndex === 'number';
 
   if (shouldGrade) {
-    // Use stored rubric OR a generic fallback if the stored one is empty
+    const specificQuestion = module.question || "the material just covered";
     const effectiveRubric = hasRubric 
       ? module.rubric 
-      : "Evaluate the user's answer based on the provided context. If correct, praise them. If incorrect, explain the right answer politely.";
+      : `Verify if the answer correctly addresses "${specificQuestion}" based on the text.`;
 
+    // 3. UPDATE GRADING PROMPT TO SUPPORT INTENT RECOGNITION
     const prompt = `You are "Tutor Qlearit," a friendly, encouraging, and highly intelligent study companion.
     
-    Goal: Evaluate answer based on Rubric without mentioning rubric.
-    Rubric: ${effectiveRubric}
-    User Answer: ${userMessage}
+    Goal: Evaluate the student's answer to a specific question based on the provided Source Text and Rubric OR answer their questions if they need help.
+    
+    Source Text (The Module):
+    ${module.content}
+    
+    The Question Asked to the Student: 
+    ${specificQuestion}
+    
+    Grading Rubric: 
+    ${effectiveRubric}
+    ${historyText}
+    
+    User's Latest Message: 
+    ${userMessage}
     
     Instructions:
-    1. Tone: Warm, supportive.
-    2. If Correct: Praise.
-    3. If Partially Correct: Validate and nudge.
-    4. If Incorrect: Explain simply.
-    5. Length: Concise (2-3 sentences).
+    1. Intent Check: Look at the Conversation History and the User's Latest Message. Determine if the user is attempting to answer "The Question Asked" OR if they are asking a follow-up question/chatting (e.g., asking for an explanation, advantages, or saying "I don't know").
+    2. IF they are asking a question/chatting: Answer their question conversationally based on the Source Text. Do NOT grade them or force them to answer the original question right now.
+    3. IF they are attempting to answer the question: Evaluate them using the Rubric. Praise if correct, guide if partially correct, explain if incorrect.
+    4. Tone: Warm, supportive.
+    5. Length: Concise (2-3 sentences). Do NOT mention the rubric or source text to the user.
     
     Response:`;
 
@@ -322,16 +344,27 @@ async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleInde
 
     return {
       response: response.text(),
-      isAnswer: true, // This allows the frontend to show the Next button
+      isAnswer: true, 
     };
   }
 
-  // Normal Chat (No grading intended)
-  const prompt = `You are "Tutor Qlearit," an expert academic tutor.
-  Goal: Answer follow-up based ONLY on context.
-  Context: ${module.content}
-  Student Question: ${userMessage}
-  Instructions: Helpful, clear, max 4 sentences.
+  // 4. UPDATE NORMAL CHAT PROMPT TO INCLUDE HISTORY
+  const prompt = `You are "Tutor Qlearit," a brilliant, warm, and highly conversational academic tutor. 
+  You are currently helping a student study the following module:
+
+  --- MODULE TEXT ---
+  ${module.content}
+  -------------------
+  ${historyText}
+
+  The student just said: "${userMessage}"
+
+  Instructions for your response:
+  1. Persona: Speak like a friendly human mentor. Be conversational, encouraging, and natural.
+  2. Teaching Style: Frequently use relatable allegories, analogies, and metaphors to break down complex ideas from the text.
+  3. Context: Base your factual explanations on the provided Module Text.
+  4. Formatting: Keep it digestible. You can use emojis sparingly. Avoid sounding like a rigid textbook.
+
   Response:`;
 
   const result = await model.generateContent(prompt);
