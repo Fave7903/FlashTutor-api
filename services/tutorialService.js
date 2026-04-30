@@ -230,7 +230,7 @@ async function startTutorialSession(userId, text, fileName = 'Untitled Tutorial'
   const totalCost = BASE_UPLOAD_COST + (paragraphs.length * CHUNK_COST);
 
   // Deduct first
-  await QreditService.deduct(userId, totalCost, `Tutorial (${paragraphs.length} modules)`);
+  const deductionResult = await QreditService.deduct(userId, totalCost, `Tutorial (${paragraphs.length} modules)`);
 
   try {
     const modules = await Promise.all(
@@ -253,12 +253,15 @@ async function startTutorialSession(userId, text, fileName = 'Untitled Tutorial'
 
   } catch (err) {
     console.error(`[Tutorial] Generation failed for user ${userId}. Refunding...`);
-    try {
-      await QreditService.refund(userId, totalCost, `Refund: Failed Tutorial Generation`);
-    } catch (refundErr) {
-      console.error('CRITICAL: REFUND FAILED', refundErr);
+
+    if (deductionResult && deductionResult.deducted) {
+      try {
+        await QreditService.refund(userId, totalCost, `Refund: Failed Tutorial Generation`);
+      } catch (refundErr) {
+        console.error('CRITICAL: REFUND FAILED', refundErr);
+      }
+      throw err;
     }
-    throw err;
   }
 }
 

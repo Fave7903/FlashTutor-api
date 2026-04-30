@@ -56,9 +56,10 @@ router.post('/api/process-file', async (req, res) => {
     }
 
     // 3. DEDUCT / RATE LIMIT
+    let deductionResult;
     try {
       // Pass 'mode' (summary/quiz) as the category for rate limiting
-      await QreditService.deduct(userId, OPERATION_COST, `Generated ${mode}`, mode);
+      deductionResult = await QreditService.deduct(userId, OPERATION_COST, `Generated ${mode}`, mode);
     } catch (error) {
       // Mark idempotency as failed so they can try again
       if (idempotencyKey) {
@@ -112,13 +113,13 @@ router.post('/api/process-file', async (req, res) => {
     } catch (opError) {
       // 🚨 CRITICAL: Operation Failed AFTER Payment. REFUND THE USER.
       console.error(`[ProcessFile] Failed after deduction for user ${userId}. Refunding...`);
-      
-      try {
-        await QreditService.refund(userId, OPERATION_COST, `Refund: Failed ${mode}`);
-      } catch (refundError) {
-        console.error('CRITICAL: REFUND FAILED. MANUAL INTERVENTION NEEDED.', refundError);
+      if (deductionResult && deductionResult.deducted) {
+        try {
+          await QreditService.refund(userId, OPERATION_COST, `Refund: Failed ${mode}`);
+        } catch (refundError) {
+          console.error('CRITICAL: REFUND FAILED. MANUAL INTERVENTION NEEDED.', refundError);
+        }
       }
-
       // Mark Idempotency as FAILED_AI so they can retry
       if (idempotencyKey) {
         await admin.firestore().collection('idempotency_keys').doc(idempotencyKey).update({ status: 'FAILED_AI' });

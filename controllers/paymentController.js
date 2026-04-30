@@ -124,7 +124,18 @@ async function handlePaystackWebhook(req, res) {
 
     const userRef = db.collection('users').doc(userId);
 
+    // 1. Create a reference to a new idempotency collection for Paystack
+    const paystackRefDoc = db.collection('paystack_references').doc(reference);
+
     await db.runTransaction(async (tx) => {
+
+      // 2. Check if this exact reference has already been processed
+      const refSnap = await tx.get(paystackRefDoc);
+      if (refSnap.exists) {
+        throw new Error('Reference already processed');
+      }
+
+
       const userSnap = await tx.get(userRef);
       if (!userSnap.exists) {
         throw new Error(`User ${userId} not found`);
@@ -148,12 +159,23 @@ async function handlePaystackWebhook(req, res) {
         balance_after: newBalance,
         created_at: admin.firestore.FieldValue.serverTimestamp()
       });
+
+      tx.set(paystackRefDoc, {
+        userId,
+        amount: qreditAmount,
+        created_at: admin.firestore.FieldValue.serverTimestamp()
+      });
+
     });
 
     console.log(`[Webhook] Successfully processed payment for user ${userId}, added ${qreditAmount} Qredits`);
     res.status(200).json({ success: true });
   } catch (err) {
     console.error('[Webhook] Error processing Paystack webhook:', err);
+    // 4. Safely acknowledge duplicate webhooks so Paystack stops sending them
+    if (err.message === 'Reference already processed') {
+      return res.status(200).json({ success: true, message: 'Already processed' });
+    }
     res.status(200).json({ success: false, error: 'Webhook processed but encountered an error', message: err.message });
   }
 }

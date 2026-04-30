@@ -59,7 +59,7 @@ class QreditService {
         created_at: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      return { success: true, newBalance };
+      return { success: true, newBalance, deducted: true };
     });
   }
 
