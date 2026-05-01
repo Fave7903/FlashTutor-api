@@ -6,7 +6,7 @@ async function handleAdMobWebhook(req, res) {
     // 1. Google sends query parameters, including the custom_data you set in Flutter
     const { ad_network, ad_unit, reward_amount, custom_data, signature, key_id, transaction_id } = req.query;
     
-    if (!custom_data) return res.status(400).send('Missing custom_data (userId)');
+    if (!custom_data) return res.status(200).send('OK');
     const userId = custom_data; // We will pass the user.uid as custom_data from Flutter
 
     // Note: For production, you MUST verify the cryptographic 'signature' using Google's public 'key_id'.
