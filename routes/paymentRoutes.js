@@ -5,6 +5,7 @@ const {
   handlePaystackWebhook,
   verifyGooglePlayPurchase
 } = require('../controllers/paymentController');
+const { handleAdMobWebhook } = require('../controllers/admobController');
 
 /**
  * POST /initialize-paystack
@@ -24,5 +25,7 @@ router.post('/verify-google-play', verifyGooglePlayPurchase);
  * * IMPORTANT: Uses express.raw() to get the raw body for signature verification.
  */
 router.post('/webhook/paystack', express.raw({ type: 'application/json' }), handlePaystackWebhook);
+
+router.get('/webhook/admob', handleAdMobWebhook); // AdMob uses GET requests for SSV
 
 module.exports = router;
