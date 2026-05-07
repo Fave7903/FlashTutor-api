@@ -30,6 +30,20 @@ async function initializePaystack(req, res) {
       });
     }
 
+    // --- ADD THIS VALIDATION CHECK ---
+    const validPackages = {
+      50: 100,  // 50 Qredits for ₦100
+      200: 300, // 200 Qredits for ₦300
+      350: 500  // 350 Qredits for ₦500
+    };
+
+    if (validPackages[qredit_amount] !== amount) {
+      return res.status(400).json({
+        error: 'Invalid price configuration for the requested Qredit amount.'
+      });
+    }
+    // ----------------------------------
+
     const response = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
@@ -225,6 +239,16 @@ async function verifyGooglePlayPurchase(req, res) {
       return res.status(400).json({ error: 'Purchase is pending or cancelled.' });
     }
 
+    // --- ADD THE OVERRIDE MAP ---
+    const qreditMap = {
+      'qredit_50_pack': 50,
+      'qredit_200_pack': 200,
+      'qredit_350_pack': 350,
+      'android.test.purchased': 50
+    };
+    const finalQreditAmount = qreditMap[productId] || Number(qreditAmount);
+    // ----------------------------
+
     const userRef = db.collection('users').doc(userId);
     const tokenRef = db.collection('purchase_tokens').doc(purchaseToken);
 
@@ -242,7 +266,7 @@ async function verifyGooglePlayPurchase(req, res) {
       }
 
       const currentBalance = userSnap.data().qredit_balance || 0;
-      const newBalance = currentBalance + Number(qreditAmount);
+      const newBalance = currentBalance + finalQreditAmount;
 
       // 3. Update Balance
       tx.update(userRef, {
