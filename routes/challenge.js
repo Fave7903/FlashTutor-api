@@ -109,6 +109,8 @@ router.post('/add_material', async (req, res) => {
     const newMaterial = {
       id: db.collection('challenges').doc().id, // Generate a unique ID for this material
       fileName: fileName || 'Untitled Module',
+      fileUrl: fileUrl || null,
+      rawText: rawText || null,
       modules: modules,
       moduleCount: modules.length
     };
@@ -226,6 +228,8 @@ router.post('/publish', async (req, res) => {
           tx.set(newTutRef, {
             userId: userId,
             fileName: material.fileName || `Arena Module ${index + 1}`,
+            fileUrl: material.fileUrl || null,
+            rawText: material.rawText || null,
             expireAt: challenge.endsAt || null, 
             startsAt: challenge.startsAt || null,          
             modules: material.modules || [], 
@@ -360,6 +364,8 @@ router.post('/join', async (req, res) => {
           tx.set(newTutRef, {
             userId: userId,                               // ⚡ Required by your standard schema
             fileName: material.fileName || `Arena Module ${index + 1}`, // ⚡ Flutter needs 'fileName', NOT 'title'!
+            fileUrl: material.fileUrl || null,
+            rawText: material.rawText || null,
             expireAt: challenge.endsAt || null, 
             startsAt: challenge.startsAt || null,          
             modules: material.modules || [],              // ⚡ The actual content
