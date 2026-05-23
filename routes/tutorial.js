@@ -43,7 +43,13 @@ router.post('/tutorial/start', async (req, res) => {
       if (!text || text.trim().length === 0) throw new Error('No text extracted');
 
       // Start Session (Service handles logic)
-      const sessionId = await startTutorialSession(userId, text, fileName || 'Untitled Tutorial');
+      const sessionId = await startTutorialSession(
+        userId, 
+        text, 
+        fileName || 'Untitled Tutorial',
+        fileUrl, // ⚡ Pass the fileUrl down
+        rawText  // ⚡ Pass the rawText down
+      );
       
       const responsePayload = { sessionId, message: 'Tutorial session started successfully' };
 

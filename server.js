@@ -9,6 +9,7 @@ const tutorialRoutes = require('./routes/tutorial');
 const processFileRoutes = require('./routes/processFile');
 const quizRoutes = require('./routes/quiz');
 const paymentRoutes = require('./routes/paymentRoutes');
+const challengeRoutes = require('./routes/challenge');
 
 const app = express();
 
@@ -29,7 +30,7 @@ app.use('/', tutorialRoutes);
 app.use('/', processFileRoutes);
 app.use('/', quizRoutes);
 app.use('/', paymentRoutes);
-
+app.use('/challenge', challengeRoutes);
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

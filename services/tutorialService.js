@@ -206,7 +206,8 @@ async function fetchActiveSession(userId, sessionId) {
 /**
  * Start a new tutorial session
  */
-async function startTutorialSession(userId, text, fileName = 'Untitled Tutorial') {
+// ⚡ ADD fileUrl and rawText to the parameters
+async function startTutorialSession(userId, text, fileName = 'Untitled Tutorial', fileUrl = null, rawText = null) {
   const paragraphs = chunkText(text);
   if (paragraphs.length === 0) {
     throw new Error('No paragraphs extracted from text');
@@ -241,6 +242,8 @@ async function startTutorialSession(userId, text, fileName = 'Untitled Tutorial'
     const payload = {
       userId,
       fileName, 
+      fileUrl,
+      rawText,
       createdAt: admin.firestore.Timestamp.now(),
       expireAt: buildExpireAtTimestamp(),
       completed: false,
@@ -383,4 +386,5 @@ module.exports = {
   startTutorialSession,
   getNextTutorialModule,
   handleTutorialFollowUp,
+  generateLearningModule,
 };
