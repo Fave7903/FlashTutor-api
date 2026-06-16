@@ -191,7 +191,8 @@ router.post('/publish', async (req, res) => {
         throw new Error('INSUFFICIENT_FUNDS');
       }
       tx.update(userRef, {
-        qredit_balance: admin.firestore.FieldValue.increment(-creatorBurden)
+        qredit_balance: admin.firestore.FieldValue.increment(-creatorBurden),
+        joinedArenas: admin.firestore.FieldValue.arrayUnion(challengeId)
       });
 
       // 3. Lock Challenge state
@@ -324,7 +325,8 @@ router.post('/join', async (req, res) => {
 
       // 2. Deduct the FULL entry fee from the User
       tx.update(userRef, { 
-        qredit_balance: admin.firestore.FieldValue.increment(-entryFee) 
+        qredit_balance: admin.firestore.FieldValue.increment(-entryFee),
+        joinedArenas: admin.firestore.FieldValue.arrayUnion(actualChallengeId)
       });
 
       // 3. Add ONLY the player's contribution to the Arena's Prize Pool

@@ -143,9 +143,23 @@ async function summarizeLongText(text) {
     properties: {
       overview: { type: "STRING", description: "A detailed, multi-paragraph overview of the entire material." },
       bullets: { type: "ARRAY", items: { type: "STRING", description: "Extensive, highly detailed study points. Use Markdown for bolding and structure." } },
-      keyTerms: { type: "ARRAY", items: { type: "STRING", description: "Key terms AND their definitions." } }
+      keyTerms: { type: "ARRAY", items: { type: "STRING", description: "Key terms AND their definitions." } },
+      // ⚡ NEW: Further Study Intent Generation
+      furtherStudy: { 
+        type: "ARRAY", 
+        items: { 
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING", description: "A catchy title for the topic to study further." },
+            searchQuery: { type: "STRING", description: "A highly optimized Google/YouTube search query for this exact topic." },
+            type: { type: "STRING", description: "Either 'Video' or 'Article'" }
+          },
+          required: ["title", "searchQuery", "type"]
+        } 
+      }
     },
-    required: ["overview", "bullets", "keyTerms"]
+    // ⚡ NEW: added furtherStudy to required
+    required: ["overview", "bullets", "keyTerms", "furtherStudy"] 
   };
 
   // ---------------------------------------------------------
@@ -158,6 +172,7 @@ async function summarizeLongText(text) {
   1. 'overview': Write a highly detailed, comprehensive narrative overview capturing all major themes and concepts.
   2. 'bullets': Extract ALL critical topics. Make each point highly detailed with sub-points. Use Markdown (e.g., bolding key phrases). For long documents, aim for 10-20 points. For shorter documents, extract only as many as the text genuinely supports without inventing information.
   3. 'keyTerms': Extract all crucial key terms and provide a concise definition for each in the format "**Term:** Definition". Do not invent terms.
+  4. 'furtherStudy': Recommend 3 to 5 specific, advanced topics related to this material that the student should explore to deepen their understanding. Provide a catchy title, classify it as best learned via 'Video' or 'Article', and provide a highly specific search query string.
 
   PARTIAL SUMMARIES:
   ${combined}`;
@@ -181,7 +196,8 @@ async function summarizeLongText(text) {
     return {
       overview: data.overview || 'No overview generated.',
       bullets: data.bullets && data.bullets.length > 0 ? data.bullets : ['No bullet points generated.'],
-      keyTerms: data.keyTerms && data.keyTerms.length > 0 ? data.keyTerms : ['No key terms generated.']
+      keyTerms: data.keyTerms && data.keyTerms.length > 0 ? data.keyTerms : ['No key terms generated.'],
+      furtherStudy: data.furtherStudy || []
     };
 
   } catch (error) {
