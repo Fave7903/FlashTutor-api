@@ -504,60 +504,76 @@ router.post('/finalize', async (req, res) => {
         // 2. Lock the Challenge state
         tx.update(challengeRef, { status: 'evaluating' });
   
-        // 3. Rank Participants
+        // 3. Rank Participants (⚡ 3-TIER SORTING)
         let players = [];
         participantsSnap.forEach(doc => {
           players.push({ id: doc.id, ...doc.data() });
         });
   
-        // Sort by Highest Score first. Tie-breaker: Who finished earliest
         players.sort((a, b) => {
-          if (b.totalCompetitiveScore !== a.totalCompetitiveScore) {
-            return b.totalCompetitiveScore - a.totalCompetitiveScore; 
-          }
+          // Tier 1: Highest Score
+          const scoreA = Number(a.totalCompetitiveScore) || 0;
+          const scoreB = Number(b.totalCompetitiveScore) || 0;
+          if (scoreB !== scoreA) return scoreB - scoreA; 
+
+          // Tier 2: Highest Progress
+          const progA = Number(a.liveProgressPercentage) || 0;
+          const progB = Number(b.liveProgressPercentage) || 0;
+          if (progB !== progA) return progB - progA;
+
+          // Tier 3: Earliest Time
           const timeA = a.lastProgressUpdate ? a.lastProgressUpdate.toMillis() : Infinity;
           const timeB = b.lastProgressUpdate ? b.lastProgressUpdate.toMillis() : Infinity;
           return timeA - timeB;
         });
   
-        const totalPool = challenge.prizePool;
+        const totalPool = challenge.prizePool || 0;
         const winners = [];
   
-       // 4. Distribute the Pool
-       if (players.length > 0 && totalPool > 0) {
-          
-        // ⚡ FIX: Calculate precise splits, and give any lost remainders to the winner!
-        let p1 = Math.round(totalPool * 0.60); // 1st Place
-        let p2 = Math.round(totalPool * 0.30); // 2nd Place
-        let p3 = Math.round(totalPool * 0.10); // 3rd Place
-        
-        const remainder = totalPool - (p1 + p2 + p3);
-        p1 += remainder; // Give leftover fractions to 1st place
-        
-        const payouts = [p1, p2, p3];
+        // ⚡ NEW RULE: Only players with a score > 0 are eligible for payouts!
+        const eligiblePlayers = players.filter(p => (Number(p.totalCompetitiveScore) || 0) > 0);
 
-        for (let i = 0; i < Math.min(players.length, 3); i++) {
-            const winnerId = players[i].id;
+        // 4. Distribute the Pool dynamically based on ELIGIBLE player count
+        if (eligiblePlayers.length > 0 && totalPool > 0) {
+          let payouts = [];
+          
+          if (eligiblePlayers.length === 1) {
+            payouts = [totalPool]; // Sole winner takes all
+          } else if (eligiblePlayers.length === 2) {
+            let p1 = Math.ceil(totalPool * 0.70); 
+            let p2 = totalPool - p1;
+            payouts = [p1, p2];
+          } else {
+            let p1 = Math.ceil(totalPool * 0.60); 
+            let p2 = Math.ceil(totalPool * 0.30); 
+            let p3 = totalPool - p1 - p2;
+            if (p3 < 0) { p2 += p3; p3 = 0; }
+            payouts = [p1, p2, p3];
+          }
+
+          for (let i = 0; i < Math.min(eligiblePlayers.length, payouts.length); i++) {
+            const winnerId = eligiblePlayers[i].id;
             const payoutAmount = payouts[i];
+            
+            // Find their actual display rank among ALL players
+            const actualRank = players.findIndex(p => p.id === winnerId) + 1;
             
             if (payoutAmount > 0) {
                const userRef = db.collection('users').doc(winnerId);
                
-               // Safely increment their balance
-               tx.update(userRef, {
+               tx.set(userRef, {
                  qredit_balance: admin.firestore.FieldValue.increment(payoutAmount)
-               });
+               }, { merge: true });
                
-               // Log the transaction for the winner
                const txnRef = userRef.collection('transactions').doc();
                tx.set(txnRef, {
                   type: 'prize_winnings',
                   amount: payoutAmount,
-                  description: `Arena Winner (Rank ${i + 1}): ${challenge.title}`,
+                  description: `Arena Winner (Rank ${actualRank}): ${challenge.title}`,
                   created_at: admin.firestore.FieldValue.serverTimestamp()
                });
   
-               winners.push({ rank: i + 1, userId: winnerId, payout: payoutAmount });
+               winners.push({ rank: actualRank, userId: winnerId, payout: payoutAmount });
             }
           }
         }
