@@ -38,7 +38,7 @@ router.post('/chat', async (req, res) => {
 
    // ⚡ NEW: Send both the text and the parts back to Flutter
    res.json({ 
-     response: response.text(),
+     response: response.candidates?.[0]?.content?.parts?.[0]?.text || '',
      parts: rawParts
    });
 

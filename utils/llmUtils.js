@@ -12,6 +12,25 @@ async function sendMessageWithRetry(chat, message, retries = 3) {
   }
 }
 
+const generateWithRetry = async (modelInstance, request, maxRetries = 3) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await modelInstance.generateContent(request);
+    } catch (error) {
+      // If we hit a 429 Quota Error and haven't run out of retries, pause and try again
+      if (error.status === 429 && attempt < maxRetries) {
+        // Exponential backoff: ~2s, then ~4s, then ~8s (plus random jitter to prevent gridlock)
+        const sleepTime = (Math.pow(2, attempt) * 1000) + (Math.random() * 1000);
+        console.warn(`[Vertex AI] 429 Quota Hit. Retrying in ${Math.round(sleepTime/1000)}s (Attempt ${attempt}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, sleepTime));
+      } else {
+        // If it's not a 429, or we've failed 3 times, throw the error normally
+        throw error;
+      }
+    }
+  }
+};
+
 
 // async function summarizeLongText(text) {
 //   const chunks = chunkText(text);
@@ -121,7 +140,7 @@ async function summarizeLongText(text) {
       const prompt = `You are an expert tutor. Extract highly detailed notes from this section. Include a comprehensive overview, exhaustive key bullet points (with sub-points if necessary), and all crucial key terms with their definitions. Do not invent information.\n\nTEXT:\n${chunk}`;
       try {
         const result = await model.generateContent(prompt);
-        return (await result.response).text();
+        return result.response.candidates?.[0]?.content?.parts?.[0]?.text || ''
       } catch (e) {
         console.warn(`Chunk ${i + index} failed, skipping...`);
         return ''; 
@@ -191,7 +210,7 @@ async function summarizeLongText(text) {
       }
     });
 
-    const data = JSON.parse(finalResult.response.text());
+    const data = JSON.parse(finalResult.response.candidates?.[0]?.content?.parts?.[0]?.text || '{}')
     
     return {
       overview: data.overview || 'No overview generated.',
@@ -263,7 +282,7 @@ async function generateQuizFromText(text, options = {}) {
     TEXT FRAGMENT: ${textSegment}`;
 
     try {
-      const result = await model.generateContent({
+      const result = await generateWithRetry(model, {
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: "application/json",
@@ -272,7 +291,7 @@ async function generateQuizFromText(text, options = {}) {
           temperature: 0.3,
         }
       });
-      const data = JSON.parse(result.response.text());
+      const data = JSON.parse(result.response.candidates?.[0]?.content?.parts?.[0]?.text || '{}');
       return data.questions || [];
     } catch (e) {
       console.error(`   x [${label}] Failed: ${e.message}`);
@@ -352,7 +371,7 @@ Now teach this concept and ask ONE comprehension question at the end.`;
 
   const result = await model.generateContent(tutorialPrompt);
   const response = await result.response;
-  const text = response.text();
+  const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
   // Try to detect if there's a question in the response
   const questionIndicators = ['?', 'question', 'what', 'how', 'why', 'which', 'can you'];

@@ -153,7 +153,7 @@ async function generateLearningModule(paragraph, index, username = '') {
     });
 
     // The response is now mathematically guaranteed to be valid JSON matching your schema
-    const rawText = result.response.text();
+    const rawText = result.response.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     const parsed = JSON.parse(rawText);
     
     summary = parsed.summary;
@@ -349,7 +349,7 @@ async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleInde
     const response = await result.response;
 
     return {
-      response: response.text(),
+      response: response.candidates?.[0]?.content?.parts?.[0]?.text || '',
       isAnswer: true, 
     };
   }
@@ -377,7 +377,7 @@ async function handleTutorialFollowUp(userId, sessionId, userMessage, moduleInde
   const response = await result.response;
 
   return {
-    response: response.text(),
+    response: response.candidates?.[0]?.content?.parts?.[0]?.text || '',
     isAnswer: false,
   };
 }

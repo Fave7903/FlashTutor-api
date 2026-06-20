@@ -50,7 +50,7 @@ router.post('/quiz', async (req, res) => {
     const response = await result.response;
     
     // Clean the raw text (removes ```json and ```)
-    const rawText = response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+    const rawText = (response.candidates?.[0]?.content?.parts?.[0]?.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
     
     // 2. DATA NORMALIZATION: Prevents type errors in Flutter
     const parsed = JSON.parse(rawText);
