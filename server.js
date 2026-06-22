@@ -11,6 +11,8 @@ const quizRoutes = require('./routes/quiz');
 const paymentRoutes = require('./routes/paymentRoutes');
 const challengeRoutes = require('./routes/challenge');
 
+const { initCronJobs } = require('./cron/arenaAlerts');
+
 const app = express();
 
 // Middleware
@@ -36,6 +38,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+initCronJobs();
 
 // Start server
 const port = config.port;

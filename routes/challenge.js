@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db, admin } = require('../config/firestore');
 const QreditService = require('../services/qreditService');
+const fcmService = require('../services/fcmService');
 
 const { chunkText, parseBufferToText, downloadFileBytes, inferFileTypeFromName } = require('../utils/fileUtils');
 // Assuming you export generateLearningModule from your tutorialService or llmUtils
@@ -469,21 +470,18 @@ router.post('/submit_quiz', async (req, res) => {
 });
 
   // POST /challenge/finalize
-router.post('/finalize', async (req, res) => {
+  router.post('/finalize', async (req, res) => {
     const { challengeId } = req.body;
     const challengeRef = db.collection('challenges').doc(challengeId);
-  
+
     try {
-      await db.runTransaction(async (tx) => {
-        // ==========================================
-        // 🛑 READ PHASE (Must happen first)
-        // ==========================================
+      // 1. Capture transaction results (player IDs and title) for the notification
+      const { participantIds, title } = await db.runTransaction(async (tx) => {
         const challengeSnap = await tx.get(challengeRef);
         if (!challengeSnap.exists) throw new Error('Challenge not found');
         
         const challenge = challengeSnap.data();
-  
-        // 1. Double-Check Status & Time
+
         if (challenge.status !== 'active' && challenge.status !== 'pending') {
           throw new Error('Challenge is already closed or evaluating.');
         }
@@ -492,53 +490,37 @@ router.post('/finalize', async (req, res) => {
         if (now.toMillis() < challenge.endsAt.toMillis()) {
           throw new Error('Challenge has not ended yet.');
         }
-  
-        // ⚡ FIX: Fetch Participants HERE, before any writes occur!
+
         const participantsRef = challengeRef.collection('participants');
         const participantsSnap = await tx.get(participantsRef);
-  
-        // ==========================================
-        // ✅ WRITE PHASE (Must happen last)
-        // ==========================================
-  
-        // 2. Lock the Challenge state
+
         tx.update(challengeRef, { status: 'evaluating' });
-  
-        // 3. Rank Participants (⚡ 3-TIER SORTING)
+
         let players = [];
         participantsSnap.forEach(doc => {
           players.push({ id: doc.id, ...doc.data() });
         });
-  
+
         players.sort((a, b) => {
-          // Tier 1: Highest Score
           const scoreA = Number(a.totalCompetitiveScore) || 0;
           const scoreB = Number(b.totalCompetitiveScore) || 0;
           if (scoreB !== scoreA) return scoreB - scoreA; 
-
-          // Tier 2: Highest Progress
           const progA = Number(a.liveProgressPercentage) || 0;
           const progB = Number(b.liveProgressPercentage) || 0;
           if (progB !== progA) return progB - progA;
-
-          // Tier 3: Earliest Time
           const timeA = a.lastProgressUpdate ? a.lastProgressUpdate.toMillis() : Infinity;
           const timeB = b.lastProgressUpdate ? b.lastProgressUpdate.toMillis() : Infinity;
           return timeA - timeB;
         });
-  
+
         const totalPool = challenge.prizePool || 0;
         const winners = [];
-  
-        // ⚡ NEW RULE: Only players with a score > 0 are eligible for payouts!
         const eligiblePlayers = players.filter(p => (Number(p.totalCompetitiveScore) || 0) > 0);
 
-        // 4. Distribute the Pool dynamically based on ELIGIBLE player count
         if (eligiblePlayers.length > 0 && totalPool > 0) {
           let payouts = [];
-          
           if (eligiblePlayers.length === 1) {
-            payouts = [totalPool]; // Sole winner takes all
+            payouts = [totalPool]; 
           } else if (eligiblePlayers.length === 2) {
             let p1 = Math.ceil(totalPool * 0.70); 
             let p2 = totalPool - p1;
@@ -554,44 +536,105 @@ router.post('/finalize', async (req, res) => {
           for (let i = 0; i < Math.min(eligiblePlayers.length, payouts.length); i++) {
             const winnerId = eligiblePlayers[i].id;
             const payoutAmount = payouts[i];
-            
-            // Find their actual display rank among ALL players
             const actualRank = players.findIndex(p => p.id === winnerId) + 1;
             
             if (payoutAmount > 0) {
-               const userRef = db.collection('users').doc(winnerId);
-               
-               tx.set(userRef, {
-                 qredit_balance: admin.firestore.FieldValue.increment(payoutAmount)
-               }, { merge: true });
-               
-               const txnRef = userRef.collection('transactions').doc();
-               tx.set(txnRef, {
+              const userRef = db.collection('users').doc(winnerId);
+              
+              tx.set(userRef, {
+                qredit_balance: admin.firestore.FieldValue.increment(payoutAmount)
+              }, { merge: true });
+              
+              const txnRef = userRef.collection('transactions').doc();
+              tx.set(txnRef, {
                   type: 'prize_winnings',
                   amount: payoutAmount,
                   description: `Arena Winner (Rank ${actualRank}): ${challenge.title}`,
                   created_at: admin.firestore.FieldValue.serverTimestamp()
-               });
-  
-               winners.push({ rank: actualRank, userId: winnerId, payout: payoutAmount });
+              });
+
+              winners.push({ rank: actualRank, userId: winnerId, payout: payoutAmount });
             }
           }
         }
-  
-        // 5. Finalize the Challenge Document
+
         tx.update(challengeRef, { 
           status: 'closed',
           winners: winners, 
           closedAt: admin.firestore.FieldValue.serverTimestamp()
         });
+
+        // Return the data needed for the FCM broadcast
+        return {
+          participantIds: players.map(p => p.id),
+          title: challenge.title
+        };
       });
-  
-      res.json({ success: true, message: 'Arena finalized and prizes distributed.' });
-  
+
+      // 2. ⚡ THE FCM BROADCAST: The "Reveal" Teaser
+      if (participantIds && participantIds.length > 0) {
+        // Fire-and-forget: we don't await this so the response returns instantly
+        fcmService.sendTargetedAlert(
+          participantIds,
+          'Arena Concluded! 🏆',
+          `The "${title}" Arena is over. Tap to reveal your final rank and see if you secured the Qredits!`,
+          { action: 'open_arena_leaderboard', challengeId: challengeId },
+          'arenaAlerts' // Tied to general arena alerts to avoid spoilers
+        );
+      }
+
+      res.json({ success: true, message: 'Arena finalized and teaser notifications dispatched.' });
+
     } catch (error) {
       console.error('Finalize Error:', error);
       res.status(500).json({ error: error.message });
     }
   });
+
+  // POST /challenge/chat_notify
+// A lightweight trigger to broadcast FCM alerts without blocking the client
+router.post('/chat_notify', async (req, res) => {
+  try {
+    const { challengeId, senderId, senderName, messageText } = req.body;
+
+    if (!challengeId || !senderId) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+
+    // 1. Fetch all participants in this Arena
+    const participantsSnap = await db.collection('challenges')
+                                     .doc(challengeId)
+                                     .collection('participants')
+                                     .get();
+
+    if (participantsSnap.empty) {
+      return res.json({ success: true, message: 'No participants found.' });
+    }
+
+    // 2. Extract IDs, explicitly filtering out the user who sent the message
+    const participantIds = [];
+    participantsSnap.forEach(doc => {
+      if (doc.id !== senderId) {
+        participantIds.push(doc.id);
+      }
+    });
+
+    // 3. Dispatch FCM (Fire-and-forget, we do not await this so the response is instant)
+    if (participantIds.length > 0) {
+      fcmService.sendTargetedAlert(
+        participantIds,
+        `Arena: ${senderName}`,
+        messageText,
+        { action: 'open_chat', challengeId: String(challengeId) },
+        'chatMessages' // Tied strictly to the user's Chat Messages toggle
+      );
+    }
+
+    res.json({ success: true, dispatchedTo: participantIds.length });
+  } catch (error) {
+    console.error('Chat Notify Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
   module.exports = router;
