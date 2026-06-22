@@ -592,49 +592,53 @@ router.post('/submit_quiz', async (req, res) => {
   });
 
   // POST /challenge/chat_notify
-// A lightweight trigger to broadcast FCM alerts without blocking the client
-router.post('/chat_notify', async (req, res) => {
-  try {
-    const { challengeId, senderId, senderName, messageText } = req.body;
+  router.post('/chat_notify', async (req, res) => {
+    try {
+      const { challengeId, senderId, senderName, messageText } = req.body;
 
-    if (!challengeId || !senderId) {
-      return res.status(400).json({ error: 'Missing required parameters' });
-    }
-
-    // 1. Fetch all participants in this Arena
-    const participantsSnap = await db.collection('challenges')
-                                     .doc(challengeId)
-                                     .collection('participants')
-                                     .get();
-
-    if (participantsSnap.empty) {
-      return res.json({ success: true, message: 'No participants found.' });
-    }
-
-    // 2. Extract IDs, explicitly filtering out the user who sent the message
-    const participantIds = [];
-    participantsSnap.forEach(doc => {
-      if (doc.id !== senderId) {
-        participantIds.push(doc.id);
+      if (!challengeId || !senderId) {
+        return res.status(400).json({ error: 'Missing required parameters' });
       }
-    });
 
-    // 3. Dispatch FCM (Fire-and-forget, we do not await this so the response is instant)
-    if (participantIds.length > 0) {
-      fcmService.sendTargetedAlert(
-        participantIds,
-        `Arena: ${senderName}`,
-        messageText,
-        { action: 'open_chat', challengeId: String(challengeId) },
-        'chatMessages' // Tied strictly to the user's Chat Messages toggle
-      );
+      // ⚡ INJECT: Fetch the challenge document first to get the title
+      const challengeRef = db.collection('challenges').doc(challengeId);
+      const challengeSnap = await challengeRef.get();
+      
+      if (!challengeSnap.exists) {
+        return res.status(404).json({ error: 'Challenge not found' });
+      }
+      const challengeTitle = challengeSnap.data().title;
+
+      // Fetch participants
+      const participantsSnap = await challengeRef.collection('participants').get();
+
+      if (participantsSnap.empty) {
+        return res.json({ success: true, message: 'No participants found.' });
+      }
+
+      const participantIds = [];
+      participantsSnap.forEach(doc => {
+        if (doc.id !== senderId) {
+          participantIds.push(doc.id);
+        }
+      });
+
+      if (participantIds.length > 0) {
+        fcmService.sendTargetedAlert(
+          participantIds,
+          // ⚡ INJECT: Format the title perfectly! e.g., "Physics 101: Godwin"
+          `${challengeTitle}: ${senderName}`, 
+          messageText,
+          { action: 'open_chat', challengeId: String(challengeId) },
+          'chatMessages' 
+        );
+      }
+
+      res.json({ success: true, dispatchedTo: participantIds.length });
+    } catch (error) {
+      console.error('Chat Notify Error:', error);
+      res.status(500).json({ error: error.message });
     }
-
-    res.json({ success: true, dispatchedTo: participantIds.length });
-  } catch (error) {
-    console.error('Chat Notify Error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+  });
 
   module.exports = router;

@@ -48,11 +48,29 @@ class FCMService {
       stringifiedData[key] = String(value);
     }
 
+    // Inside fcmService.js, update the message object:
     const message = {
-      notification: { title, body },
-      data: stringifiedData,
-      tokens: tokens,
-    };
+        notification: { title, body },
+        data: stringifiedData,
+        tokens: tokens,
+        // ⚡ INJECT: Android Grouping
+        android: {
+          notification: {
+            tag: dataPayload.challengeId || 'general', // Groups by Arena ID
+          }
+        },
+        // ⚡ INJECT: iOS Grouping
+        apns: {
+          headers: {
+            "apns-collapse-id": dataPayload.challengeId || 'general',
+          },
+          payload: {
+            aps: {
+              "thread-id": dataPayload.challengeId || 'general',
+            }
+          }
+        }
+      };
 
     try {
       // Handles up to 500 tokens natively per call
