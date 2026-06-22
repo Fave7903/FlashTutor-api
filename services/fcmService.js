@@ -53,20 +53,24 @@ class FCMService {
         notification: { title, body },
         data: stringifiedData,
         tokens: tokens,
-        // ⚡ INJECT: Android Grouping
+        // ⚡ ANDROID FIX: Force High Priority and Sound to trigger the Banner
         android: {
+          priority: 'high', 
           notification: {
-            tag: dataPayload.challengeId || 'general', // Groups by Arena ID
+            tag: dataPayload.challengeId || 'general',
+            sound: 'default', // Android requires a sound to trigger the pop-up
           }
         },
-        // ⚡ INJECT: iOS Grouping
+        // ⚡ iOS FIX: Force High Priority and Sound
         apns: {
           headers: {
+            "apns-priority": "10", // 10 is max priority for Apple
             "apns-collapse-id": dataPayload.challengeId || 'general',
           },
           payload: {
             aps: {
               "thread-id": dataPayload.challengeId || 'general',
+              sound: 'default', // iOS requires a sound to trigger the banner
             }
           }
         }
