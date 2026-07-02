@@ -327,7 +327,9 @@ async function generateQuizFromText(text, options = {}) {
 }
 
 // ⚡ ADDED username PARAMETER HERE (defaults to empty string) ⚡
-async function generateTutorialModule(paragraphText, moduleIndex = 0, username = '') {
+async function generateTutorialModule(paragraphText, moduleIndex = 0, username = '', options = {}) {
+  const isArena = options.isArena === true || Boolean(options.challengeId);
+
   // For the first module, use a welcoming prompt. For subsequent modules, be continuous.
   const introText = moduleIndex === 0 
     ? `You are Qlearit, an expert, fun, and engaging AI tutor. I'll be teaching you step by step. Let's begin!\n\n`
@@ -348,9 +350,13 @@ async function generateTutorialModule(paragraphText, moduleIndex = 0, username =
    - **Conflict Prevention:** Never put standard text descriptions inside a LaTeX math block.
 `;
 
-  // ⚡ INJECT PERSONALIZATION IF USERNAME IS PROVIDED ⚡
-  const personalTouch = username 
+  // ⚡ INJECT PERSONALIZATION IF USERNAME IS PROVIDED (skip for Arena/Challenge) ⚡
+  const personalTouch = !isArena && username 
     ? `\n- Personalization: Occasionally address the student by their name (${username}) to build a friendly connection.` 
+    : '';
+
+  const arenaInstructions = isArena
+    ? `\n\nThis is a competitive Challenge/Arena. Treat the user as a participant. Do not refer to the creator's username. Focus strictly on the material in an objective, challenging tone.`
     : '';
 
   const tutorialPrompt = `${introText}Teach this concept clearly and simply. Explain step-by-step, then ask ONE comprehension question at the end to check understanding.
@@ -362,7 +368,7 @@ Teaching style:
 - Motivational: encourage learning
 - Concise to keep tokens minimal${personalTouch}
 
-${formattingRules}
+${formattingRules}${arenaInstructions}
 
 Paragraph to teach:
 ${paragraphText}

@@ -101,10 +101,11 @@ router.post('/add_material', async (req, res) => {
     const paragraphs = chunkText(text);
     if (paragraphs.length === 0) throw new Error('No readable text found.');
 
-    // C. Generate Modules via Gemini
-    const username = challengeSnap.data().creatorName;
+    // C. Generate Modules via Gemini (Arena mode: no creator username personalization)
     const modules = await Promise.all(
-      paragraphs.map((paragraph, index) => generateLearningModule(paragraph, index, username))
+      paragraphs.map((paragraph, index) =>
+        generateLearningModule(paragraph, index, '', { isArena: true, challengeId })
+      )
     );
 
     const newMaterial = {
@@ -396,24 +397,46 @@ router.post('/join', async (req, res) => {
 
 // POST /challenge/progress
 router.post('/progress', async (req, res) => {
-    try {
-      const { userId, challengeId, progressPercentage, materialIndex } = req.body;
-      
-      // Fire-and-forget update for high-throughput live tracking
-      const participantRef = db.collection('challenges').doc(challengeId)
-                               .collection('participants').doc(userId);
-  
-      await participantRef.update({
-        liveProgressPercentage: progressPercentage,
+  try {
+    const { userId, challengeId, progressPercentage, materialIndex } = req.body;
+    
+    const challengeRef = db.collection('challenges').doc(challengeId);
+    const participantRef = challengeRef.collection('participants').doc(userId);
+
+    await db.runTransaction(async (tx) => {
+      const challengeSnap = await tx.get(challengeRef);
+      const participantSnap = await tx.get(participantRef);
+
+      if (!challengeSnap.exists || !participantSnap.exists) {
+        throw new Error('Challenge or Participant not found');
+      }
+
+      const challenge = challengeSnap.data();
+      const participant = participantSnap.data();
+
+      // Track individual course progress mapping
+      const materialProgress = participant.materialProgress || {};
+      materialProgress[materialIndex.toString()] = progressPercentage;
+
+      // Calculate aggregate cumulative progress across all active materials
+      const totalMaterials = challenge.materials.length || 1;
+      let totalSum = 0;
+      Object.values(materialProgress).forEach(val => totalSum += Number(val || 0));
+      const cumulativeProgress = totalSum / totalMaterials;
+
+      tx.update(participantRef, {
+        materialProgress: materialProgress,
+        liveProgressPercentage: cumulativeProgress, // Becomes the multi-course cumulative average
         currentMaterialIndex: materialIndex,
-        lastProgressUpdate: admin.firestore.FieldValue.serverTimestamp()
+        lastProgressUpdate: admin.firestore.Timestamp.now()
       });
-  
-      res.json({ success: true });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
   
 // POST /challenge/submit_quiz
 router.post('/submit_quiz', async (req, res) => {

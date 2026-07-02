@@ -92,9 +92,9 @@ function tutorialCollectionForUser(userId) {
 
 
 // ⚡ ADDED: username parameter ⚡
-async function generateLearningModule(paragraph, index, username = '') {
+async function generateLearningModule(paragraph, index, username = '', options = {}) {
   // First, generate the rich tutorial text (explanation + embedded question)
-  const tutorial = await generateTutorialModule(paragraph, index, username);
+  const tutorial = await generateTutorialModule(paragraph, index, username, options);
   const text = tutorial.text;
 
   // Try to extract the explicit question from the generated text
